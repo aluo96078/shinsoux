@@ -21,7 +21,6 @@
     <ID>LongParameterList:SyncApi.kt:SyncApi$private suspend fun &lt;B, R&gt; call: R</ID>
     <ID>LongParameterList:SyncApi.kt:SyncApi$private suspend fun &lt;B&gt; exchange: Pair&lt;Int, String&gt;</ID>
     <ID>LongParameterList:SyncApi.kt:SyncApi$suspend fun listReviews: WireReviewPage</ID>
-    <ID>LongParameterList:SyncClient.kt:SyncClient$public suspend fun register: Result&lt;Unit&gt;</ID>
     <ID>LongParameterList:SyncDiff.kt:SyncDiff$private inline fun &lt;T&gt; diffList</ID>
     <ID>LongParameterList:SyncPromoter.kt:SyncPromoter$private fun promoteInto</ID>
     <ID>LongParameterList:SyncV3Service.kt:SyncV3Service</ID>

@@ -43,7 +43,8 @@ import dev.shinsou.kmp.sync.v3.SyncApiException
 import dev.shinsou.kmp.sync.v3.SyncServerAddress
 import dev.shinsou.kmp.sync.v3.SyncServerAddressException
 import dev.shinsou.kmp.sync.v3.SyncUiState
-import dev.shinsou.kmp.sync.v3.SyncClient
+import dev.shinsou.kmp.sync.v3.SyncAccount
+import dev.shinsou.kmp.sync.v3.SyncSharing
 import dev.shinsou.kmp.sync.v3.WireDevice
 import dev.shinsou.kmp.sync.v3.WireInstance
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
@@ -59,12 +60,12 @@ import dev.shinsou.kmp.ui.components.SettingsList
 
 /** More → Sync: choose a server, sign in or register, then see status and manage devices. */
 @Composable
-fun SyncSettingsPane(
-    sync: SyncClient?,
+fun <S> SyncSettingsPane(
+    sync: S?,
     copyText: (label: String, text: String) -> Boolean = { _, _ -> false },
     kinds: SyncKindSettings = SyncKindSettings(),
     onKindsChange: (SettingsEdit<SyncKindSettings>) -> Unit = {},
-) {
+) where S : SyncAccount, S : SyncSharing {
     val strings = LocalShinsouStrings.current
     if (sync == null) {
         SettingsList { item { SettingDescription(strings.text(StringKey.SYNC_IS_UNAVAILABLE_IN_THIS_BUILD)) } }
@@ -100,7 +101,7 @@ internal fun ErrorText(message: String?) {
 }
 
 @Composable
-private fun SignedOutSection(sync: SyncClient, state: SyncUiState) {
+private fun SignedOutSection(sync: SyncAccount, state: SyncUiState) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var addressInput by remember { mutableStateOf(state.serverUrl.orEmpty()) }
@@ -316,7 +317,7 @@ private fun SyncKindsCard(kinds: SyncKindSettings, onChange: (SettingsEdit<SyncK
 }
 
 @Composable
-private fun SignedInSection(sync: SyncClient, state: SyncUiState, kinds: SyncKindSettings, onKindsChange: (SettingsEdit<SyncKindSettings>) -> Unit) {
+private fun SignedInSection(sync: SyncAccount, state: SyncUiState, kinds: SyncKindSettings, onKindsChange: (SettingsEdit<SyncKindSettings>) -> Unit) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var devices by remember { mutableStateOf<List<WireDevice>?>(null) }

@@ -3,18 +3,38 @@ package dev.shinsou.kmp.ui.core
 import dev.shinsou.kmp.domain.model.SourceKey
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import dev.shinsou.kmp.plugin.SourceCatalog
-import dev.shinsou.kmp.plugin.BrowseSnapshot
+
+/**
+ * What [PluginImageLoader] needs of the source catalogue (0008): the source authority and the
+ * host's image fetch. The shell supplies it from the browse catalogue, so the design system
+ * knows no plugin type and a plugin ABI change does not recompile it.
+ */
+interface PluginImageSource {
+    /**
+     * A token for the current source authority (the installs, removals, updates, trust and
+     * enabled state of the sources): equal tokens mean the same sources may still serve the same
+     * images. Read on every cache access, so it must be cheap.
+     */
+    fun currentAuthority(): Any?
+
+    /** [currentAuthority] as it changes: emits only when an install, removal, update or trust change happens. */
+    val authority: Flow<Any?>
+
+    /**
+     * Fetches a plugin-owned image through the host content plane: bounded bytes only, or null.
+     * The UI image loaders never receive a plugin-controlled remote URL.
+     */
+    suspend fun loadThumbnail(sourceId: Long, url: String, headers: Map<String, String>): ByteArray?
+
+    suspend fun loadThumbnail(sourceKey: SourceKey, url: String, headers: Map<String, String>): ByteArray?
+}
 
 /**
  * Host content-plane bridge used by image composables. Plugin-controlled URLs are classified by
@@ -22,11 +42,11 @@ import dev.shinsou.kmp.plugin.BrowseSnapshot
  *
  * Successfully fetched cover bytes are retained in a bounded LRU cache so a cover that scrolls
  * out of a lazy list and back again is neither re-downloaded nor shown as a placeholder. The cache
- * is bound to the current source authority: any install, removal, update or trust change in the
- * browse snapshot discards every entry, so a revoked source can no longer supply cached bytes.
+ * is bound to the current source authority ([PluginImageSource.currentAuthority]): any install,
+ * removal, update or trust change discards every entry, so a revoked source can no longer supply cached bytes.
  */
 class PluginImageLoader internal constructor(
-    private val catalog: SourceCatalog?,
+    private val source: PluginImageSource?,
     maxConcurrentLoads: Int = DEFAULT_PLUGIN_IMAGE_CONCURRENCY,
     maxCachedBytes: Long = DEFAULT_PLUGIN_IMAGE_CACHE_BYTES,
     maxCachedEntries: Int = DEFAULT_PLUGIN_IMAGE_CACHE_ENTRIES,
@@ -42,26 +62,15 @@ class PluginImageLoader internal constructor(
      */
     internal val instanceId: Long = nextPluginImageLoaderId()
 
-    // Last snapshot -> token. A racing recomputation is harmless: the token is a pure function.
-    @kotlin.concurrent.Volatile
-    private var authorityMemo: Pair<BrowseSnapshot?, Any?>? = null
-
-    internal val cache = PluginImageByteCache(maxCachedBytes, maxCachedEntries) {
-        authorityOf(catalog?.state?.value)
-    }
+    internal val cache = PluginImageByteCache(maxCachedBytes, maxCachedEntries) { source?.currentAuthority() }
 
     /**
      * Source authority as seen by image composables. It emits only when an install, removal,
      * update or trust change happens, so a mounted cover can drop bytes fetched under the old one.
      */
-    val authority: Flow<Any?> = catalog?.state?.map(::authorityOf)?.distinctUntilChanged() ?: flowOf(null)
+    val authority: Flow<Any?> = source?.authority ?: flowOf(null)
 
-    fun currentAuthority(): Any? = authorityOf(catalog?.state?.value)
-
-    private fun authorityOf(snapshot: BrowseSnapshot?): Any? {
-        authorityMemo?.let { (memoSnapshot, token) -> if (memoSnapshot === snapshot) return token }
-        return snapshot?.let(::pluginImageAuthority).also { authorityMemo = snapshot to it }
-    }
+    fun currentAuthority(): Any? = source?.currentAuthority()
 
     fun load(
         sourceId: Long,
@@ -79,7 +88,7 @@ class PluginImageLoader internal constructor(
                 // Every other persisted legacy source is extension-controlled even while its
                 // runtime is unloaded; a failed host fetch must remain a placeholder.
                 else -> PluginImageRequest(this, pluginImageCacheKey("legacy", sourceId.toString(), value, headers)) {
-                    catalog?.loadPluginThumbnail(sourceId, value, headers)
+                    source?.loadThumbnail(sourceId, value, headers)
                 }
             }
         }
@@ -98,7 +107,7 @@ class PluginImageLoader internal constructor(
                 sourceKey.legacyLongId?.toString().orEmpty(),
             ).joinToString("") { "${it.length}:$it" }
             PluginImageRequest(this, pluginImageCacheKey("key", scope, value, headers)) {
-                catalog?.loadPluginThumbnail(sourceKey, value, headers)
+                source?.loadThumbnail(sourceKey, value, headers)
             }
         }
 
@@ -118,8 +127,8 @@ class PluginImageLoader internal constructor(
     companion object {
         val None = PluginImageLoader(null)
 
-        /** C1 (0007): the shell's loader for [catalog], with the default limits (the constructor's tuning stays internal). */
-        fun forCatalog(catalog: SourceCatalog?): PluginImageLoader = PluginImageLoader(catalog)
+        /** C1 (0007): the shell's loader for [source], with the default limits (the constructor's tuning stays internal). */
+        fun forSource(source: PluginImageSource?): PluginImageLoader = PluginImageLoader(source)
     }
 }
 
@@ -185,15 +194,6 @@ private fun pluginImageCacheKey(
     (listOf(scope, url) + headers.entries.sortedBy { it.key }.flatMap { listOf(it.key, it.value) })
         .forEach { append(it.length).append(':').append(it) }
 }
-
-/** Everything in the browse snapshot that decides whether a source may still serve images. */
-private fun pluginImageAuthority(snapshot: BrowseSnapshot): Any = listOf(
-    // Disabling a source withdraws its covers as well, even though the host could still fetch them.
-    snapshot.sources.mapTo(HashSet()) { listOf(it.identityKey, it.id, it.enabled) },
-    snapshot.extensions.mapTo(HashSet()) {
-        listOf(it.id, it.version, it.installed, it.trusted, it.sourceIds)
-    },
-)
 
 /**
  * Size- and count-bounded LRU of encoded image bytes. Each entry is charged for its key and a

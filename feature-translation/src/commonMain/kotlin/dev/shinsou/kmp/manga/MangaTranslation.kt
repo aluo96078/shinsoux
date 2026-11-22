@@ -185,7 +185,7 @@ public class MangaTranslation(
         resourceManager.downloadLanguage(from, to, onProgress)
 
     /** The ways this device can run detection, which are chosen, and what each still needs. */
-    override fun acceleratorStates(): List<MangaTranslationService.AcceleratorState> = resourceManager.acceleratorStates()
+    override fun acceleratorStates(): List<MangaAccelerators.AcceleratorState> = resourceManager.acceleratorStates()
 
     /**
      * Downloads what [accelerator] needs (its models, and for Qualcomm's NPU the QNN runtime from

@@ -31,7 +31,8 @@ import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.manga.MangaAccelerator
 import dev.shinsou.kmp.manga.MangaCpuMode
 import dev.shinsou.kmp.manga.MangaTranslationFlow
-import dev.shinsou.kmp.manga.MangaTranslationService
+import dev.shinsou.kmp.manga.MangaAccelerators
+import dev.shinsou.kmp.manga.MangaProcessingSettings
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.authoredOrExternal
 import dev.shinsou.kmp.ui.i18n.StringKey
@@ -47,11 +48,11 @@ private class AcceleratorWork(val fraction: Float?)
  * share a chapter's pages. Recognition, translation and drawing stay on the CPU.
  */
 @Composable
-internal fun MangaAcceleratorSettings(manga: MangaTranslationService) {
+internal fun <M> MangaAcceleratorSettings(manga: M) where M : MangaAccelerators, M : MangaProcessingSettings {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var revision by remember { mutableIntStateOf(0) }
-    var states by remember { mutableStateOf(emptyList<MangaTranslationService.AcceleratorState>()) }
+    var states by remember { mutableStateOf(emptyList<MangaAccelerators.AcceleratorState>()) }
     val work = remember { mutableStateMapOf<MangaAccelerator, AcceleratorWork>() }
     var failure by remember { mutableStateOf<String?>(null) }
     var cpuMode by remember { mutableStateOf<MangaCpuMode?>(null) }
@@ -122,7 +123,7 @@ internal fun MangaAcceleratorSettings(manga: MangaTranslationService) {
 /** One accelerator: its checkbox, what it needs, and the download or remove action or progress. */
 @Composable
 private fun AcceleratorCard(
-    state: MangaTranslationService.AcceleratorState,
+    state: MangaAccelerators.AcceleratorState,
     chosen: Set<MangaAccelerator>,
     running: AcceleratorWork?,
     onChoose: (Boolean) -> Unit,

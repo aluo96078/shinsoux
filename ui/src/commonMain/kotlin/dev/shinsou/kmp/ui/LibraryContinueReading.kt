@@ -18,7 +18,7 @@ import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.plugin.ExtensionLibraryBinding
 import dev.shinsou.kmp.plugin.ExtensionPublicationCatalog
-import dev.shinsou.kmp.sync.v3.SyncClient
+import dev.shinsou.kmp.sync.v3.SyncWorks
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
@@ -57,7 +57,7 @@ internal fun <B> rememberLibraryContinueReading(
     snapshot: AppSnapshot,
     libraryItems: List<LibraryItem>,
     typedBindings: Map<PublicationKey, ExtensionLibraryBindingV2>,
-    sync: SyncClient?,
+    sync: SyncWorks?,
     browse: B,
     workDispatcher: CoroutineDispatcher,
 ): LibraryContinueReading? where B : ExtensionPublicationCatalog, B : ExtensionLibraryBinding {

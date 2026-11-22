@@ -7,7 +7,7 @@ import dev.shinsou.kmp.manga.MangaChapterRequest
 import dev.shinsou.kmp.manga.MangaLanguages
 import dev.shinsou.kmp.manga.MangaOrientation
 import dev.shinsou.kmp.manga.MangaProgress
-import dev.shinsou.kmp.manga.MangaTranslationService
+import dev.shinsou.kmp.manga.MangaChapterTranslation
 import dev.shinsou.kmp.translation.ChineseScript
 import dev.shinsou.kmp.translation.OfflineModelCatalog
 import dev.shinsou.kmp.translation.ReaderTranslation
@@ -36,7 +36,7 @@ public fun mangaPrefetchGroup(manga: Manga): String = mangaWorkKey(manga)
  * twice (OCR results, translations and drawn pages are all cached).
  */
 public fun mangaPrefetchJob(
-    manga: MangaTranslationService,
+    manga: MangaChapterTranslation,
     translation: ReaderTranslation,
     work: Manga,
     chapter: Chapter,
@@ -74,7 +74,7 @@ public fun mangaPrefetchJob(
  * then opens translated. Throws [TranslationException] for what stops the queue.
  */
 internal suspend fun translateMangaChapterAhead(
-    manga: MangaTranslationService,
+    manga: MangaChapterTranslation,
     translation: ReaderTranslation,
     workKey: String,
     chapterKey: String,

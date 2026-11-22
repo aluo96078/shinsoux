@@ -29,7 +29,7 @@ import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.manga.MangaModelCatalog
 import dev.shinsou.kmp.manga.MangaResource
 import dev.shinsou.kmp.manga.MangaResourceKind
-import dev.shinsou.kmp.manga.MangaTranslationService
+import dev.shinsou.kmp.manga.MangaResources
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.i18n.ShinsouStrings
 import dev.shinsou.kmp.ui.i18n.StringKey
@@ -40,11 +40,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Everything manga translation downloaded on this device ([MangaTranslationService.resources]): what each
+ * Everything manga translation downloaded on this device ([MangaResources.resources]): what each
  * is for and takes, with its download or removal. [onChange] is told after either.
  */
 @Composable
-internal fun MangaResourceSettings(manga: MangaTranslationService, workDispatcher: CoroutineDispatcher = Dispatchers.Default, onChange: () -> Unit = {}) {
+internal fun MangaResourceSettings(manga: MangaResources, workDispatcher: CoroutineDispatcher = Dispatchers.Default, onChange: () -> Unit = {}) {
     val strings = LocalShinsouStrings.current
     val scope = rememberCoroutineScope()
     var revision by remember { mutableIntStateOf(0) }

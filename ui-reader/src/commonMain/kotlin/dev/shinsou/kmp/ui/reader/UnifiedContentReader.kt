@@ -286,7 +286,7 @@ fun UnifiedContentReader(
     /** What the reader's shell calls this work and chapter; kept with a stored translation. */
     translationLabels: dev.shinsou.kmp.translation.TranslationLabels? = null,
     /** Manga translation for image chapters (ADR-0005); null leaves them untranslated. */
-    mangaTranslation: dev.shinsou.kmp.manga.MangaTranslationService? = null,
+    mangaTranslation: dev.shinsou.kmp.manga.MangaChapterTranslation? = null,
     /** The work's language as its source gives it, blank when it does not say (its first pages are read then). */
     workLanguage: String = "",
     onPageIndexChanged: (pageIndex: Int, pageCount: Int) -> Unit = { _, _ -> },
@@ -388,7 +388,7 @@ suspend fun prefetchChapter(
     features: ContentFeatures,
     labels: dev.shinsou.kmp.translation.TranslationLabels?,
     /** Translates image chapters too, as manga pages (ADR-0005); without it only text is. */
-    manga: dev.shinsou.kmp.manga.MangaTranslationService? = null,
+    manga: dev.shinsou.kmp.manga.MangaChapterTranslation? = null,
     /** The work's language as its source gives it, and the app's: chosen from as the reader would. */
     workLanguage: String? = null,
     appLanguage: String? = null,
@@ -767,7 +767,7 @@ private fun MangaTranslationControls(
 private fun ImageSequenceUnifiedContentReader(
     session: TypedReaderContentSession,
     features: ContentFeatures,
-    mangaTranslation: dev.shinsou.kmp.manga.MangaTranslationService?,
+    mangaTranslation: dev.shinsou.kmp.manga.MangaChapterTranslation?,
     workLanguage: String,
     translationRequestSerial: Long,
     translationToggleSerial: Long,

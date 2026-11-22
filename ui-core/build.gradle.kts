@@ -4,6 +4,9 @@
 // enums), the review Markdown and small Compose utilities. It knows no screen: every UI module
 // (:ui-reader, :ui-translation, :ui-sync, :ui) and the app depend on it, and it only on the layers
 // below. No Compose resources (they are :ui's); no generated Res class.
+// 0008: no feature module either (DependencyDirectionTest): a plugin or translation ABI change
+// recompiles only the UI modules that use it. The plugin image loader takes a PluginImageSource
+// the shell supplies; the feature labels live with the screens that show them.
 plugins {
     id("shinsou.kmp-library")
     id("shinsou.testing")
@@ -20,8 +23,6 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":core"))
             implementation(project(":domain"))
-            implementation(project(":feature-translation"))
-            implementation(project(":feature-plugin"))
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)

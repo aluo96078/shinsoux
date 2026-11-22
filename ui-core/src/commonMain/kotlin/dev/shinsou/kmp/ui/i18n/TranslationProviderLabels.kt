@@ -1,13 +1,18 @@
 package dev.shinsou.kmp.ui.i18n
 
-import dev.shinsou.kmp.translation.TranslationProviderKind
-
-/** The name of a translation service, as the translation settings and the readers show it. */
-fun TranslationProviderKind.label(strings: ShinsouStrings): String = when (this) {
-    TranslationProviderKind.OFFLINE -> strings.text(StringKey.OFFLINE_FREE)
-    TranslationProviderKind.SYSTEM -> strings.text(StringKey.SYSTEM_TRANSLATION_APPLE)
-    TranslationProviderKind.DEEPL -> "DeepL"
-    TranslationProviderKind.GOOGLE -> strings.text(StringKey.GOOGLE_TRANSLATE)
-    TranslationProviderKind.AZURE -> "Azure Translator"
-    TranslationProviderKind.LLM -> strings.text(StringKey.AI_MODEL_YOUR_OWN_API)
+/**
+ * The name of the translation service whose id is [id] (`TranslationProviderKind.id`), as the
+ * translation settings and the readers show it; null for an id that names no service.
+ *
+ * 0008: keyed by the id, so the design system does not depend on :feature-translation;
+ * `ui.translation.TranslationServiceNamesTest` keeps every service named.
+ */
+fun translationServiceName(id: String, strings: ShinsouStrings): String? = when (id) {
+    "offline" -> strings.text(StringKey.OFFLINE_FREE)
+    "system" -> strings.text(StringKey.SYSTEM_TRANSLATION_APPLE)
+    "deepl" -> "DeepL"
+    "google" -> strings.text(StringKey.GOOGLE_TRANSLATE)
+    "azure" -> "Azure Translator"
+    "llm" -> strings.text(StringKey.AI_MODEL_YOUR_OWN_API)
+    else -> null
 }
