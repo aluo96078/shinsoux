@@ -139,10 +139,16 @@ jobs:
           target: ${{ matrix.api == 29 && 'default' || 'google_apis' }}
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
-          script: >
-            ./gradlew :feature-plugin:connectedDebugAndroidTest :composeApp:connectedDebugAndroidTest
-            -PshinsouSandboxDeviceTest=true -Pkotlin.native.enableKlibsCrossCompilation=false
-            && (adb logcat -d -s SSC-S2 | tee feature-plugin/build/sandbox-device.log)
+          # One module at a time: with the configuration cache Gradle runs the two connected-test
+          # tasks in parallel on the one emulator, and the sandbox tests crash processes on purpose
+          # (am crash), which took adb down under the other module's install ("device offline").
+          # The emulator runner runs each line on its own and stops at the first that fails. The
+          # sandbox log is kept before the app's tests can push it out of the logcat buffer.
+          script: |
+            ./gradlew :feature-plugin:connectedDebugAndroidTest -PshinsouSandboxDeviceTest=true -Pkotlin.native.enableKlibsCrossCompilation=false
+            adb logcat -d -s SSC-S2 | tee feature-plugin/build/sandbox-device.log
+            adb wait-for-device shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done'
+            ./gradlew :composeApp:connectedDebugAndroidTest -PshinsouSandboxDeviceTest=true -Pkotlin.native.enableKlibsCrossCompilation=false
 
       - name: Summarize
         if: always()

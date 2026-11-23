@@ -150,12 +150,28 @@ public object IosSkiaPageCodec : PageCodec {
         return ByteArray(jpeg.length.toInt()).also { out -> out.usePinned { memcpy(it.addressOf(0), jpeg.bytes, jpeg.length) } }
     }
 
-    // The reader's images go through Skia, which on iOS reads PNG but not JPEG.
+    /**
+     * The reader's images go through Skia. The Skia of Compose 1.11 reads JPEG on iOS, so a page
+     * it reads is handed over as it is; one it cannot (an older Skia had no JPEG decoder on iOS,
+     * ADR-0005) is turned into PNG, which it always reads.
+     */
+    override fun forDisplay(jpeg: ByteArray): ByteArray = if (skiaReads(jpeg)) jpeg else pngOf(jpeg) ?: jpeg
+
+    private fun skiaReads(encoded: ByteArray): Boolean =
+        runCatching {
+            val image = Image.makeFromEncoded(encoded)
+            try {
+                image.width > 0 && image.height > 0
+            } finally {
+                image.close()
+            }
+        }.getOrDefault(false)
+
     @OptIn(ExperimentalForeignApi::class)
-    override fun forDisplay(jpeg: ByteArray): ByteArray {
+    private fun pngOf(jpeg: ByteArray): ByteArray? {
         val png = jpeg.usePinned { NSData.create(bytes = it.addressOf(0), length = jpeg.size.convert()) }
-            .let { UIImage.imageWithData(it) }?.let { UIImagePNGRepresentation(it) } ?: return jpeg
-        return ByteArray(png.length.toInt()).also { out -> out.usePinned { memcpy(it.addressOf(0), png.bytes, png.length) } }
+            .let { UIImage.imageWithData(it) }?.let { UIImagePNGRepresentation(it) }
+        return png?.let { data -> ByteArray(data.length.toInt()).also { out -> out.usePinned { memcpy(it.addressOf(0), data.bytes, data.length) } } }
     }
 
     override fun toImageBitmap(image: RgbImage): ImageBitmap = bitmapOf(image).asComposeImageBitmap()
