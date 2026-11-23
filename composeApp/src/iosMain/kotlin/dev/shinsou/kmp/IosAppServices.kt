@@ -33,6 +33,7 @@ import dev.shinsou.kmp.ui.portability.PortableContentBackupV2UiController
 import dev.shinsou.kmp.ui.portability.ShuYueMigrationUiController
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCObjectVar
 import kotlinx.cinterop.alloc
@@ -42,6 +43,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.value
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -56,12 +58,19 @@ import kotlinx.coroutines.withContext
 import okio.FileSystem
 import okio.Path.Companion.toPath
 import okio.buffer
+import platform.Foundation.NSBundle
 import platform.Foundation.NSData
 import platform.Foundation.NSError
+import platform.Foundation.NSFileCoordinator
+import platform.Foundation.NSCocoaErrorDomain
 import platform.Foundation.NSFileHandle
+import platform.Foundation.NSFileReadNoPermissionError
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSHomeDirectory
+import platform.Foundation.NSLock
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSNumber
+import platform.Foundation.NSPOSIXErrorDomain
 import platform.Foundation.NSString
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
@@ -74,6 +83,7 @@ import platform.Foundation.closeFile
 import platform.Foundation.dataUsingEncoding
 import platform.Foundation.fileHandleForReadingFromURL
 import platform.Foundation.readDataOfLength
+import platform.Foundation.seekToEndOfFile
 import platform.Foundation.seekToFileOffset
 import platform.Foundation.writeToURL
 import platform.LocalAuthentication.LAContext
@@ -95,6 +105,8 @@ import platform.UserNotifications.UNUserNotificationCenter
 import platform.darwin.NSObject
 import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_main_queue
+import platform.posix.EACCES
+import platform.posix.EPERM
 import kotlin.coroutines.resume
 
 /** Notification observed by the Swift trace recorder for one ordered reader-volume event. */
@@ -126,6 +138,11 @@ internal class IosAppServices(
     private val documentPickerMutex = Mutex()
     private var activeDocumentDelegate: IosDocumentPickerDelegate? = null
     private var fallbackSafariController: SFSafariViewController? = null
+
+    init {
+        // No import can be using an earlier process's picker copies.
+        removePickerCopies()
+    }
 
     override val deepLinks: Flow<ShinsouDeepLink> = pendingDeepLinks.events
     override val readerVolumeKeyEvents: Flow<ReaderVolumeKeyEvent> = readerVolumeKeyChannel.receiveAsFlow()
@@ -384,23 +401,43 @@ internal class IosAppServices(
         acceptedExtensions: Set<String>,
         limits: ImportedDocumentLimits,
     ): ImportedDocument? {
-        val selected = pickDocumentUrls(allowsMultipleSelection = false)
-            .firstOrNull()
-            ?.takeIf { it.hasAcceptedExtension(acceptedExtensions) }
-            ?: return null
-        return withContext(Dispatchers.Default) { selected.readImportedDocument(limits) }
+        val picked = pickImportedDocumentUrls(allowsMultipleSelection = false)
+        val selected = picked.acceptedOrDiscarded(acceptedExtensions).firstOrNull() ?: return null
+        var document: ImportedDocument? = null
+        var delivered = false
+        try {
+            withContext(Dispatchers.Default) { document = selected.readImportedDocument(limits) }
+            delivered = true
+            return document
+        } finally {
+            // Cancelled on the way back, the caller never gets the document to close (and delete its copy).
+            if (!delivered) document?.close() ?: selected.discardPickerCopy()
+        }
     }
 
     override suspend fun pickLocalFiles(
         acceptedExtensions: Set<String>,
         limits: ImportedDocumentLimits,
     ): List<ImportedDocument> {
-        val selected = pickDocumentUrls(allowsMultipleSelection = true)
-            .filter { it.hasAcceptedExtension(acceptedExtensions) }
-        return withContext(Dispatchers.Default) {
-            var acceptedBytes = 0L
-            selected.map { url ->
-                url.readImportedDocument(limits, acceptedBytes).also { acceptedBytes += it.byteSize }
+        val selected = pickImportedDocumentUrls(allowsMultipleSelection = true).acceptedOrDiscarded(acceptedExtensions)
+        val documents = mutableListOf<ImportedDocument>()
+        var delivered = false
+        try {
+            withContext(Dispatchers.Default) {
+                var acceptedBytes = 0L
+                selected.forEach { url ->
+                    documents += url.readImportedDocument(limits, acceptedBytes)
+                    acceptedBytes += documents.last().byteSize
+                }
+            }
+            delivered = true
+            return documents
+        } finally {
+            if (!delivered) {
+                // The import never sees these (a failure, or cancellation on the way back), so it
+                // cannot close them and delete their copies.
+                documents.forEach(ImportedDocument::close)
+                selected.drop(documents.size).forEach { it.discardPickerCopy() }
             }
         }
     }
@@ -484,25 +521,58 @@ internal class IosAppServices(
     /** iOS applications must not terminate themselves; the system owns process lifecycle. */
     override fun requestApplicationClose() = Unit
 
+    /**
+     * Picks documents to import. They are opened where they are stored when the app can do that,
+     * so their sizes are checked before anything is copied; a host that does not give the app
+     * that access (LiveContainer) gets copies instead ([IosDocumentPickerMode]). Whether a picked
+     * original can be opened is not asked here: a file the provider has not downloaded is not on
+     * disk until its coordinated read, so only that read can tell ([readImportedDocument]).
+     */
+    private suspend fun pickImportedDocumentUrls(allowsMultipleSelection: Boolean): List<NSURL> =
+        pickDocumentUrls(allowsMultipleSelection = allowsMultipleSelection, asCopy = IosDocumentPickerMode.copies)
+
     private suspend fun pickDocumentUrls(
         exportUrl: NSURL? = null,
         allowsMultipleSelection: Boolean,
-    ): List<NSURL> = documentPickerMutex.withLock {
+        asCopy: Boolean = true,
+    ): List<NSURL> {
+        // What the picker returned, kept for cleanup until it is handed to the caller.
+        var picked: List<NSURL> = emptyList()
+        var delivered = false
+        try {
+            presentDocumentPicker(exportUrl, allowsMultipleSelection, asCopy) { picked = it }
+            delivered = true
+            return picked
+        } finally {
+            // Cancelled on the way back from the main thread: nobody gets the copies to delete.
+            if (!delivered) picked.forEach { it.discardPickerCopy() }
+        }
+    }
+
+    private suspend fun presentDocumentPicker(
+        exportUrl: NSURL?,
+        allowsMultipleSelection: Boolean,
+        asCopy: Boolean,
+        onPicked: (List<NSURL>) -> Unit,
+    ): Unit = documentPickerMutex.withLock {
         withContext(Dispatchers.Main) {
-            val presenter = topViewController() ?: return@withContext emptyList()
+            val presenter = topViewController() ?: return@withContext
             val result = CompletableDeferred<List<NSURL>>()
             val delegate = IosDocumentPickerDelegate(result)
             val picker = if (exportUrl != null) {
                 UIDocumentPickerViewController(forExportingURLs = listOf(exportUrl))
             } else {
-                UIDocumentPickerViewController(forOpeningContentTypes = listOf(UTTypeData))
+                // A copy is a plain file in this app's temporary directory, made before the app can
+                // check its size. Opening the original in place needs security-scoped access that
+                // hosts such as LiveContainer do not give the app (the picker never returned).
+                UIDocumentPickerViewController(forOpeningContentTypes = listOf(UTTypeData), asCopy = asCopy)
             }
             picker.allowsMultipleSelection = exportUrl == null && allowsMultipleSelection
             picker.delegate = delegate
             activeDocumentDelegate = delegate
             presenter.presentViewController(picker, animated = true, completion = null)
             try {
-                result.await()
+                onPicked(result.await())
             } finally {
                 activeDocumentDelegate = null
             }
@@ -579,48 +649,271 @@ private class IosDocumentPickerDelegate(
     }
 }
 
+/** One picked document to read: its display name and the limits it is checked against. */
+private class ImportedDocumentRead(
+    val name: String,
+    val limits: ImportedDocumentLimits,
+    val previouslyAcceptedBytes: Long,
+)
+
+/**
+ * Reads a picked document. The picker's copy is this app's own file. An original opened in place
+ * is the file provider's: it is read inside a coordinated read ([coordinatedRead]), so the
+ * provider and other writers do not change it meanwhile. An original the sandbox does not let
+ * this app open makes the picker hand back copies from then on ([importFailure]). Blocks, so it
+ * runs off the main thread.
+ */
 @OptIn(ExperimentalForeignApi::class)
 private fun NSURL.readImportedDocument(
     limits: ImportedDocumentLimits,
     previouslyAcceptedBytes: Long = 0,
 ): ImportedDocument {
     val granted = startAccessingSecurityScopedResource()
-    val name = lastPathComponent ?: "document"
+    val read = ImportedDocumentRead(lastPathComponent ?: "document", limits, previouslyAcceptedBytes)
+    val inPlace = !isPickerCopy()
     return try {
-        val declaredSize = declaredFileSize()
-        if (limits.prefersRandomAccess(name)) {
-            val checkedSize = requireImportedDocumentSize(
-                name,
-                declaredSize,
-                limits,
-                previouslyAcceptedBytes,
-            )
-            return ImportedDocument(name, IosUrlImportedDocumentSource(this, name, checkedSize))
+        if (inPlace) {
+            // Refused here when the size is known already: coordinating the read can make the
+            // provider download the file first. It is checked again on the coordinated file.
+            declaredFileSize()?.let { requireImportedDocumentSize(read.name, it, limits, previouslyAcceptedBytes) }
+            coordinatedRead(read.name) { coordinated -> coordinated.readCheckedDocument(read, original = true) }
+        } else {
+            readCheckedDocument(read, original = false)
         }
-        val handle = NSFileHandle.fileHandleForReadingFromURL(this, error = null)
-            ?: throw ImportedDocumentReadException("Unable to open “$name”.")
-        try {
-            ImportedDocument(
-                name = name,
-                contents = readBoundedImportedBytes(
-                    name = name,
-                    declaredSize = declaredSize,
-                    limits = limits,
-                    previouslyAcceptedBytes = previouslyAcceptedBytes,
-                ) { destination, offset, length ->
-                    handle.readDataOfLength(length.toULong()).copyInto(destination, offset, length)
-                },
-            )
-        } finally {
-            runCatching { handle.closeFile() } // closing a read-only handle; nothing to lose
-        }
-    } catch (error: ImportedDocumentReadException) {
-        throw error
     } catch (error: Throwable) {
-        throw ImportedDocumentReadException("Unable to read “$name”.", error)
+        discardPickerCopy()
+        throw importFailure(error, read.name, inPlace)
     } finally {
         if (granted) stopAccessingSecurityScopedResource()
     }
+}
+
+/**
+ * What the import reports for [error], which reading the document named [name] threw. When the
+ * sandbox refused an original opened [inPlace] ([OpenInPlaceDeniedException]), this host does not
+ * let the app open picked files where they are stored: the picker copies from now on
+ * ([IosDocumentPickerMode.rememberCopies]) and the user is told to choose the file again. That is
+ * decided here, on the failure of the coordinated read itself, and for nothing else: a file that
+ * is missing, one its provider could not download, a network failure or a cancellation says
+ * nothing about the host, and remembering copies for one would give up the size check before
+ * copying for every later import.
+ */
+private fun importFailure(error: Throwable, name: String, inPlace: Boolean): ImportedDocumentReadException = when {
+    error is OpenInPlaceDeniedException && inPlace -> {
+        IosDocumentPickerMode.rememberCopies()
+        ImportedDocumentReadException(
+            "“$name” could not be opened where it is stored. Choose it again; it will be copied into the app first.",
+            error,
+        )
+    }
+    error is ImportedDocumentReadException -> error
+    // A picker copy the app could not open: its own file, so nothing about the host.
+    error is OpenInPlaceDeniedException -> ImportedDocumentReadException(error.message ?: "Unable to open “$name”.", error)
+    else -> ImportedDocumentReadException("Unable to read “$name”.", error)
+}
+
+/**
+ * Checks this file's size against the limits, then reads it: a small document into memory, a
+ * random-access one (an EPUB or archive) through a file this app owns. For an [original] that
+ * file is a snapshot made here, inside the coordinated read and only after the size check, so a
+ * file over the limits is never copied; the import then reads the snapshot, which nothing else
+ * changes, instead of the provider's file. A picker copy is that file already.
+ */
+@OptIn(ExperimentalForeignApi::class)
+private fun NSURL.readCheckedDocument(read: ImportedDocumentRead, original: Boolean): ImportedDocument {
+    val (declaredSize, sizeError) = fileSizeOrError()
+    if (!read.limits.prefersRandomAccess(read.name)) return readIntoMemory(read, declaredSize)
+    // A size the sandbox would not give is its refusal of the file, not a file of unknown size;
+    // nothing after the size check would get to open the file and find that out.
+    if (declaredSize == null) openInPlaceDenial(sizeError, "Unable to open “${read.name}”.")?.let { throw it }
+    val checkedSize = requireImportedDocumentSize(read.name, declaredSize, read.limits, read.previouslyAcceptedBytes)
+    val owned = if (original) copyToImportSnapshot(read.name, checkedSize) else this
+    return ImportedDocument(read.name, IosUrlImportedDocumentSource(owned, read.name, checkedSize))
+}
+
+/** Reads this whole file, bounded by the limits, and deletes it when it is a picker copy. */
+@OptIn(ExperimentalForeignApi::class)
+private fun NSURL.readIntoMemory(read: ImportedDocumentRead, declaredSize: Long?): ImportedDocument {
+    val (opened, openError) = capturingNSError { error -> NSFileHandle.fileHandleForReadingFromURL(this, error = error) }
+    val handle = opened ?: throw openFailure(openError, "Unable to open “${read.name}”.")
+    return try {
+        ImportedDocument(
+            name = read.name,
+            contents = readBoundedImportedBytes(
+                name = read.name,
+                declaredSize = declaredSize,
+                limits = read.limits,
+                previouslyAcceptedBytes = read.previouslyAcceptedBytes,
+            ) { destination, offset, length ->
+                handle.readDataOfLength(length.toULong()).copyInto(destination, offset, length)
+            },
+        )
+    } finally {
+        runCatching { handle.closeFile() } // closing a read-only handle; nothing to lose
+        // The bytes are in memory now; the picker's copy is no longer needed.
+        discardPickerCopy()
+    }
+}
+
+/**
+ * Runs [read] on this provider-owned file inside a coordinated read (NSFileCoordinator): the file
+ * provider makes the file current (downloading it when needed), presenters with unsaved changes
+ * write them first, and writers wait until [read] returns. A security-scoped grant only permits
+ * access; it coordinates nothing. [read] gets the URL to use for the duration of the read. Blocks
+ * the calling thread, so it runs off the main thread.
+ */
+@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
+private fun <T : Any> NSURL.coordinatedRead(name: String, read: (NSURL) -> T): T {
+    var outcome: Result<T>? = null
+    val original = this
+    val (_, coordinationError) = capturingNSError { error ->
+        NSFileCoordinator(filePresenter = null).coordinateReadingItemAtURL(
+            url = original,
+            options = 0u,
+            error = error,
+        ) { coordinated ->
+            // Kept, not thrown: a Kotlin exception must not unwind through the coordinator's frames.
+            outcome = runCatching { read(coordinated ?: original) }
+        }
+    }
+    // The accessor does not run when the coordinator could not grant the read.
+    return (outcome ?: Result.failure(openFailure(coordinationError, "Unable to open “$name”."))).getOrThrow()
+}
+
+/** Runs [call] with somewhere to put an NSError; gives back what it returned and the error it left, if any. */
+@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
+private inline fun <T> capturingNSError(call: (CPointer<ObjCObjectVar<NSError?>>) -> T): Pair<T, NSError?> = memScoped {
+    val error = alloc<ObjCObjectVar<NSError?>>()
+    call(error.ptr) to error.value
+}
+
+/**
+ * An original picked to be opened in place that the sandbox did not let this app open. Its
+ * message is that of the ordinary failure, which is what a picker copy failing this way reports.
+ */
+private class OpenInPlaceDeniedException(message: String) : Exception(message)
+
+/** The failure, with [message], of opening or copying a picked file that left [error]. */
+private fun openFailure(error: NSError?, message: String): Exception =
+    openInPlaceDenial(error, message) ?: ImportedDocumentReadException(message)
+
+/** [error] as the sandbox's refusal of a picked file, with [message]; null when it is not one. */
+private fun openInPlaceDenial(error: NSError?, message: String): OpenInPlaceDeniedException? =
+    error?.takeIf { isOpenInPlaceDenial(it.domain, it.code) }?.let { OpenInPlaceDeniedException(message) }
+
+/**
+ * Whether an NSError of this [domain] and [code] says the system refused this app permission to
+ * read a file, as the sandbox does for a picked original in a host that does not give the app its
+ * security-scoped access: Foundation reports NSFileReadNoPermissionError (257), and a call that
+ * surfaces errno directly EPERM or EACCES. Only the error's own domain and code count, not one it
+ * wraps: "no such file" (260, ENOENT), a file provider's download, network or sign-in failures
+ * (NSFileProviderErrorDomain, NSURLErrorDomain), and a cancelled read (3072) have other codes and
+ * are ordinary import failures, whatever lies beneath them.
+ */
+internal fun isOpenInPlaceDenial(domain: String?, code: Long): Boolean = when (domain) {
+    NSCocoaErrorDomain -> code == NSFileReadNoPermissionError
+    NSPOSIXErrorDomain -> code == EPERM.toLong() || code == EACCES.toLong()
+    else -> false
+}
+
+/**
+ * Copies this file, whose size was checked as [expectedSize], into the app's import snapshots.
+ * The caller holds a coordinated read, so the copy is of one consistent state of the file.
+ */
+@OptIn(ExperimentalForeignApi::class)
+private fun NSURL.copyToImportSnapshot(name: String, expectedSize: Long): NSURL {
+    val manager = NSFileManager.defaultManager
+    val directory = "${NSTemporaryDirectory().trimEnd('/')}/$IMPORT_SNAPSHOT_DIRECTORY"
+    manager.createDirectoryAtPath(directory, withIntermediateDirectories = true, attributes = null, error = null)
+    val snapshot = NSURL.fileURLWithPath("$directory/${NSUUID().UUIDString}")
+    val (copied, copyError) = capturingNSError { error -> manager.copyItemAtURL(this, toURL = snapshot, error = error) }
+    if (!copied || snapshot.declaredFileSize() != expectedSize) {
+        manager.removeItemAtURL(snapshot, error = null)
+        throw if (copied) {
+            ImportedDocumentReadException("“$name” changed while it was being imported.")
+        } else {
+            // Reading the original is what the sandbox can refuse; a snapshot that cannot be
+            // written reports a write error (513), which is not a denial of the original.
+            openFailure(copyError, "Unable to copy “$name” for import.")
+        }
+    }
+    return snapshot
+}
+
+/** In the app's temporary directory: the snapshots of originals an import reads ([copyToImportSnapshot]). */
+private const val IMPORT_SNAPSHOT_DIRECTORY = "shinsou-import-snapshots"
+
+/**
+ * Whether the document picker hands back copies instead of the originals. Copies work in every
+ * host but are made before their size can be checked, so they are used only where opening in
+ * place does not work: an app run by another app (LiveContainer runs it from its own data
+ * container), or after the sandbox refused the coordinated read of a picked original once
+ * ([isOpenInPlaceDenial]). A file that merely is not there yet does not count: an iCloud Drive or
+ * other provider's item that is not downloaded appears on disk only inside its coordinated read.
+ */
+internal object IosDocumentPickerMode {
+    private const val COPIES_PREFERENCE = "dev.aluo.shinsoux.document-picker.copies"
+
+    val copies: Boolean
+        get() = hosted || NSUserDefaults.standardUserDefaults.boolForKey(COPIES_PREFERENCE)
+
+    fun rememberCopies() {
+        NSUserDefaults.standardUserDefaults.setBool(true, forKey = COPIES_PREFERENCE)
+    }
+
+    /**
+     * An installed app runs from its own bundle container with its own data container as home;
+     * anything else is a host running it (or a layout this check does not know, which copies).
+     */
+    private val hosted: Boolean by lazy {
+        val bundle = NSBundle.mainBundle.bundlePath
+        val home = NSHomeDirectory()
+        !(INSTALLED_BUNDLE.containsMatchIn(bundle) && INSTALLED_HOME.containsMatchIn(home))
+    }
+
+    private val INSTALLED_BUNDLE = Regex("/Containers/Bundle/Application/[0-9A-Fa-f-]{36}/[^/]+\\.app/?$")
+    private val INSTALLED_HOME = Regex("/Containers/Data/Application/[0-9A-Fa-f-]{36}/?$")
+}
+
+/** Keeps the accepted picker results and deletes the copies of the rest. */
+private fun List<NSURL>.acceptedOrDiscarded(acceptedExtensions: Set<String>): List<NSURL> =
+    partition { it.hasAcceptedExtension(acceptedExtensions) }
+        .also { (_, rejected) -> rejected.forEach { it.discardPickerCopy() } }
+        .first
+
+/** Deletes this file if it is a picker copy this app owns; originals are never touched. */
+@OptIn(ExperimentalForeignApi::class)
+private fun NSURL.discardPickerCopy() {
+    if (isPickerCopy()) NSFileManager.defaultManager.removeItemAtURL(this, error = null)
+}
+
+/**
+ * Whether this file is a copy this app owns and deletes: the document picker copies picked files
+ * into `tmp/<bundle id>-Inbox`, and an import snapshots an original into
+ * `tmp/`[IMPORT_SNAPSHOT_DIRECTORY].
+ */
+@OptIn(ExperimentalForeignApi::class)
+private fun NSURL.isPickerCopy(): Boolean {
+    val path = standardizedURL?.path ?: return false
+    return pickerCopyDirectories().any { path.startsWith("$it/") }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun pickerCopyDirectories(): List<String> {
+    val temporary = NSURL.fileURLWithPath(NSTemporaryDirectory()).standardizedURL?.path ?: return emptyList()
+    val names = NSFileManager.defaultManager.contentsOfDirectoryAtPath(temporary, error = null).orEmpty()
+    return names.filterIsInstance<String>()
+        .filter { it.endsWith("-Inbox") || it == IMPORT_SNAPSHOT_DIRECTORY }
+        .map { "$temporary/$it" }
+}
+
+/**
+ * Removes every picker copy and import snapshot, for those a crash or a caller that never closed
+ * its document left behind. Only safe when no import can be running, so it runs at launch.
+ */
+@OptIn(ExperimentalForeignApi::class)
+private fun removePickerCopies() {
+    pickerCopyDirectories().forEach { NSFileManager.defaultManager.removeItemAtPath(it, error = null) }
 }
 
 @OptIn(ExperimentalForeignApi::class)
@@ -629,30 +922,31 @@ private class IosUrlImportedDocumentSource(
     private val displayName: String,
     override val byteSize: Long,
 ) : ImportedDocumentSource {
+    private val lock = NSLock()
+
+    /**
+     * One handle for the whole import. Reopening the file (and re-granting its security scope) for
+     * every chunk made a large EPUB cost thousands of opens. [close] releases it after the import;
+     * the archive digest check after import still catches a file changed underneath.
+     */
+    private var handle: NSFileHandle? = null
+    private var granted = false
+
     override fun read(offset: Long, byteCount: Int): ByteArray {
         require(offset in 0..byteSize && byteCount >= 0 &&
             byteCount.toLong() <= byteSize - offset) { "Imported document read is out of bounds" }
         val output = ByteArray(byteCount)
         if (byteCount == 0) return output
-        val granted = url.startAccessingSecurityScopedResource()
+        lock.lock()
         try {
-            if (url.declaredFileSize() != byteSize) {
+            val reader = openHandle()
+            reader.seekToFileOffset(offset.toULong())
+            val actual = reader.readDataOfLength(byteCount.toULong())
+                .copyInto(output, offset = 0, requested = byteCount)
+            // The held file's own length, not its path's: data appended to a file opened in
+            // place stays within byteSize for every read, so the digest would never see it.
+            if (actual != byteCount || reader.seekToEndOfFile() != byteSize.toULong()) {
                 throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
-            }
-            val handle = NSFileHandle.fileHandleForReadingFromURL(url, error = null)
-                ?: throw ImportedDocumentReadException("Unable to open “$displayName”.")
-            try {
-                handle.seekToFileOffset(offset.toULong())
-                val actual = handle.readDataOfLength(byteCount.toULong())
-                    .copyInto(output, offset = 0, requested = byteCount)
-                if (actual != byteCount) {
-                    throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
-                }
-                if (url.declaredFileSize() != byteSize) {
-                    throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
-                }
-            } finally {
-                runCatching { handle.closeFile() } // closing a read-only handle; nothing to lose
             }
             return output
         } catch (error: ImportedDocumentReadException) {
@@ -660,16 +954,50 @@ private class IosUrlImportedDocumentSource(
         } catch (error: Throwable) {
             throw ImportedDocumentReadException("Unable to read “$displayName”.", error)
         } finally {
-            if (granted) url.stopAccessingSecurityScopedResource()
+            lock.unlock()
         }
+    }
+
+    override fun close() {
+        lock.lock()
+        try {
+            handle?.let { runCatching { it.closeFile() } } // closing a read-only handle; nothing to lose
+            handle = null
+            if (granted) url.stopAccessingSecurityScopedResource()
+            granted = false
+            // The picker's copy or an import snapshot: this app's file, not read again.
+            url.discardPickerCopy()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    private fun openHandle(): NSFileHandle {
+        handle?.let { return it }
+        if (!granted) granted = url.startAccessingSecurityScopedResource()
+        if (url.declaredFileSize() != byteSize) {
+            throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
+        }
+        return (NSFileHandle.fileHandleForReadingFromURL(url, error = null)
+            ?: throw ImportedDocumentReadException("Unable to open “$displayName”."))
+            .also { handle = it }
     }
 }
 
+private fun NSURL.declaredFileSize(): Long? = fileSizeOrError().first
+
+/**
+ * This file's size, or null with the error that kept it from being read, if there was one.
+ * Measured now: an NSURL caches its resource values, and a size cached before a coordinated read
+ * can be stale inside it (the provider brought the file up to date, or it grew), which would let
+ * a file over the limits be copied whole before the copy is found to differ.
+ */
 @OptIn(ExperimentalForeignApi::class)
-private fun NSURL.declaredFileSize(): Long? {
-    val key = NSURLFileSizeKey ?: return null
-    val value = resourceValuesForKeys(listOf(key), error = null)?.get(key) as? NSNumber
-    return value?.longLongValue
+private fun NSURL.fileSizeOrError(): Pair<Long?, NSError?> {
+    val key = NSURLFileSizeKey ?: return null to null
+    removeCachedResourceValueForKey(key)
+    val (values, error) = capturingNSError { error -> resourceValuesForKeys(listOf(key), error = error) }
+    return (values?.get(key) as? NSNumber)?.longLongValue to error
 }
 
 private fun NSURL.hasAcceptedExtension(acceptedExtensions: Set<String>): Boolean {

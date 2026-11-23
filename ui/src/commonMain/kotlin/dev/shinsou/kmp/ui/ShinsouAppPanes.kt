@@ -43,7 +43,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.ContinuationInterceptor
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -180,6 +182,7 @@ internal data class BrowseSectionHooks(
     val onBackAvailabilityChanged: (Boolean) -> Unit,
     val onParentDismissed: () -> Unit,
     val onReaderVisibilityChanged: (Boolean) -> Unit,
+    val onReaderOpening: () -> Unit,
     val onReaderProgress: ExtensionReaderProgressSink,
     val onReaderProgressFlushed: suspend () -> Unit,
     val volumeKeyRouter: ReaderVolumeKeyRouter,
@@ -458,6 +461,7 @@ internal fun SectionPane(
                     onBackAvailabilityChanged = browse.onBackAvailabilityChanged,
                     onParentDismissed = browse.onParentDismissed,
                     onReaderVisibilityChanged = browse.onReaderVisibilityChanged,
+                    onReaderOpening = browse.onReaderOpening,
                 ),
                 reader = ExtensionReaderHost(
                     contentFeatures = appServices.contentFeatures,
@@ -483,19 +487,35 @@ internal fun SectionPane(
                 incognitoMode = snapshot.settings.security.incognitoMode,
                 downloadOnlyMode = snapshot.settings.library.downloadOnly,
                 onOpen = onOpenMore,
-                onImportLocal = { syncContentBodies ->
-                    actions.onUi {
-                        val documents = appServices.pickLocalFiles(
-                            acceptedExtensions = LOCAL_CONTENT_EXTENSIONS,
-                            limits = LOCAL_IMPORTED_DOCUMENT_LIMITS,
-                        )
-                        val imported = actions.stores {
-                            appServices.content.importLocalDocuments(
-                                documents = documents,
-                                syncContentBodies = syncContentBodies,
-                            )
+                localImportInProgress = LocalImportActivity.running,
+                onImportLocal = { syncContentBodies, chooseTextEncoding ->
+                    if (!LocalImportActivity.running) {
+                        actions.onUi {
+                            LocalImportActivity.track {
+                                val documents = appServices.pickLocalFiles(
+                                    acceptedExtensions = LOCAL_CONTENT_EXTENSIONS,
+                                    limits = LOCAL_IMPORTED_DOCUMENT_LIMITS,
+                                )
+                                // Parsing runs beside the serial store queue: a large import takes
+                                // long enough that every library, settings and progress write
+                                // queued behind it would stall. Its library writes still join the
+                                // queue, and each title's content commit is part of its write, so
+                                // a reset or restore cannot run between them.
+                                val ui = checkNotNull(currentCoroutineContext()[ContinuationInterceptor])
+                                val imported = handOverPickedDocuments(documents, workDispatcher) {
+                                    appServices.content.importLocalDocuments(
+                                        documents = documents,
+                                        syncContentBodies = syncContentBodies,
+                                        writeLibrary = { write -> actions.stores { write() } },
+                                        chooseTextEncoding = { question ->
+                                            withContext(ui) { LocalImportActivity.chooseTextEncoding(question) }
+                                        },
+                                        alwaysChooseTextEncoding = chooseTextEncoding,
+                                    )
+                                }
+                                imported.firstOrNull()?.let { onOpenManga(it.mangaId) }
+                            }
                         }
-                        imported.firstOrNull()?.let { onOpenManga(it.mangaId) }
                     }
                 },
                 onIncognitoModeChange = { enabled ->
@@ -1187,14 +1207,23 @@ internal fun MoreDestinationPane(
                                     randomAccessExtensions = setOf("shinsou2"),
                                 ),
                             ) ?: return@onUi
-                            actions.stores {
-                            controller.inspectForRestore(
-                                object : BackupV2ArchiveSource {
-                                    override val byteSize: Long get() = document.byteSize
-                                    override fun read(offset: Long, byteCount: Int): ByteArray =
-                                        document.source.read(offset, byteCount)
-                                },
-                            )
+                            // The controller owns the document once it is handed over; until then,
+                            // a cancelled hop to the store queue must not leave the file open.
+                            var handedOver = false
+                            try {
+                                actions.stores {
+                                    handedOver = true
+                                    controller.inspectForRestore(
+                                        object : BackupV2ArchiveSource {
+                                            override val byteSize: Long get() = document.byteSize
+                                            override fun read(offset: Long, byteCount: Int): ByteArray =
+                                                document.source.read(offset, byteCount)
+                                            override fun close() = document.close()
+                                        },
+                                    )
+                                }
+                            } finally {
+                                if (!handedOver) document.close()
                             }
                         }
                     },

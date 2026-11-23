@@ -1,6 +1,10 @@
 package dev.shinsou.kmp.content.acquisition
 
+import dev.shinsou.kmp.domain.content.ContentManifest
 import dev.shinsou.kmp.domain.content.ContentRepresentation
+import dev.shinsou.kmp.domain.content.MAX_CONTENT_METADATA_JSON_CHARS
+import dev.shinsou.kmp.domain.content.MAX_STORABLE_TEXT_BLOCKS
+import dev.shinsou.kmp.domain.content.TextBlock
 import dev.shinsou.kmp.content.blob.InMemoryContentBlobStore
 import dev.shinsou.kmp.domain.model.PublicationKey
 import kotlin.test.Test
@@ -11,6 +15,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.Json
 
 class TextAcquisitionServiceTest {
     @Test
@@ -85,6 +90,114 @@ class TextAcquisitionServiceTest {
         assertEquals(original.blocks[1].blockId, inserted.blocks[2].blockId)
         assertEquals(original.blocks[2].blockId, inserted.blocks[3].blockId)
         assertNotEquals(original.blocks[1].blockId, original.blocks[2].blockId)
+    }
+
+    @Test
+    fun aTextWithMoreParagraphsThanBlocksMergesThemEvenlyWithinItsChapters() {
+        // 120,400 paragraphs: 400 chapters of a heading and 300 paragraphs each.
+        val source = buildString {
+            repeat(400) { chapter ->
+                append("第").append(chapter + 1).append("章\n\n")
+                repeat(300) { paragraph -> append("c").append(chapter).append("p").append(paragraph).append("\n\n") }
+            }
+        }
+        val acquired = TextAcquisitionService(InMemoryContentBlobStore()).acquire(
+            TextAcquisitionRequest(target(), source.encodeToByteArray()),
+        )
+        val text = acquired.metadata.canonicalText
+        val blocks = (acquired.representation as ContentRepresentation.PlainText).blocks
+
+        // Four paragraphs to a block is the fewest that fits; 301 paragraphs make 76 blocks.
+        assertEquals(400 * 76, blocks.size)
+        assertTrue(blocks.size <= MAX_STORABLE_TEXT_BLOCKS)
+        val paragraphCounts = blocks.map { text.substring(it.startUtf16, it.endUtf16).split("\n\n").size }
+        assertEquals(setOf(3, 4), paragraphCounts.toSet())
+        // Nothing but blank lines lies outside the blocks.
+        assertTrue(text.substring(0, blocks.first().startUtf16).isBlank())
+        assertTrue(text.substring(blocks.last().endUtf16).isBlank())
+        assertTrue(blocks.zipWithNext().all { (left, right) -> text.substring(left.endUtf16, right.startUtf16).isBlank() })
+
+        val blockByStart = blocks.associateBy { it.startUtf16 }
+        assertEquals(400, acquired.metadata.chapters.size)
+        acquired.metadata.chapters.forEach { chapter ->
+            assertEquals(blockByStart[chapter.startUtf16]?.blockId, chapter.blockIds.first(), chapter.title)
+            assertEquals(76, chapter.blockIds.size, chapter.title)
+        }
+        assertEquals(blocks.size, blocks.map { it.blockId }.toSet().size)
+        // What is stored with the manifest fits the store.
+        assertTrue(Json.encodeToString(ContentManifest.serializer(), acquired.manifest).length < MAX_CONTENT_METADATA_JSON_CHARS)
+
+        val again = TextAcquisitionService(InMemoryContentBlobStore()).acquire(
+            TextAcquisitionRequest(target(), source.encodeToByteArray()),
+        )
+        assertEquals(blocks, (again.representation as ContentRepresentation.PlainText).blocks)
+        assertEquals(acquired.metadata.chapters, again.metadata.chapters)
+    }
+
+    @Test
+    fun mergedBlocksKeepTheBlankLinesBetweenTheirParagraphsAndStopAtAChapterHeading() {
+        val source = "a\n\nb\n\n\n# Two\nc\n\nd\n\ne\n\nf"
+        val acquired = TextAcquisitionService(
+            InMemoryContentBlobStore(),
+            policy = TextAcquisitionPolicy(maximumBlocks = 3),
+        ).acquire(TextAcquisitionRequest(target(), source.encodeToByteArray()))
+        val blocks = (acquired.representation as ContentRepresentation.PlainText).blocks
+
+        // Five paragraphs, two before the heading: a block of three would cross it.
+        assertEquals(listOf("a\n\nb", "# Two\nc\n\nd", "e\n\nf"), blocks.map { source.substring(it.startUtf16, it.endUtf16) })
+        assertEquals(listOf(1, 2), acquired.metadata.chapters.map { it.blockIds.size })
+        assertEquals(blocks[1].blockId, acquired.metadata.chapters[1].blockIds.first())
+    }
+
+    @Test
+    fun aTextWithinTheBlockLimitKeepsOneBlockForEachParagraph() {
+        val source = "alpha\n\n# Two\nbeta\n\ngamma\n\nalpha"
+        fun blocksWith(policy: TextAcquisitionPolicy) = (
+            TextAcquisitionService(InMemoryContentBlobStore(), policy = policy)
+                .acquire(TextAcquisitionRequest(target(), source.encodeToByteArray()))
+                .representation as ContentRepresentation.PlainText
+            ).blocks
+        val blocks = blocksWith(TextAcquisitionPolicy())
+
+        assertEquals(
+            listOf("alpha", "# Two\nbeta", "gamma", "alpha"),
+            blocks.map { source.substring(it.startUtf16, it.endUtf16) },
+        )
+        // The limit itself changes nothing until a text exceeds it, so these ids are the ones
+        // an earlier import of the text has.
+        assertEquals(blocks, blocksWith(TextAcquisitionPolicy(maximumBlocks = 100_000)))
+        assertEquals(blocks, blocksWith(TextAcquisitionPolicy(maximumBlocks = 4)))
+        assertNotEquals(blocks, blocksWith(TextAcquisitionPolicy(maximumBlocks = 3)))
+    }
+
+    @Test
+    fun moreChaptersThanBlocksAreRefusedBeforeAnythingIsPublished() {
+        val store = InMemoryContentBlobStore()
+        val failure = assertFailsWith<IllegalArgumentException> {
+            TextAcquisitionService(store, policy = TextAcquisitionPolicy(maximumBlocks = 2))
+                .acquire(TextAcquisitionRequest(target(), "# One\n\n# Two\n\n# Three".encodeToByteArray()))
+        }
+        assertEquals("Text contains more chapters than it may have locator blocks", failure.message)
+        assertEquals(0, store.count)
+    }
+
+    @Test
+    fun theLargestStoredBlockMapFitsTheMetadataStore() {
+        val acquired = TextAcquisitionService(InMemoryContentBlobStore())
+            .acquire(TextAcquisitionRequest(target(), "text".encodeToByteArray()))
+        val representation = acquired.representation as ContentRepresentation.PlainText
+        // The longest a block gets: a derived id and offsets near the end of a 64 MiB text.
+        val idLength = representation.blocks.single().blockId.length
+        val blocks = List(MAX_STORABLE_TEXT_BLOCKS) { index ->
+            val start = 60_000_000 + index * 2
+            TextBlock("block-" + index.toString().padStart(idLength - 6, '0'), start, start + 1)
+        }
+        val manifest = acquired.manifest.copy(
+            representations = listOf(representation.copy(canonicalUtf16Length = 67_108_864, blocks = blocks)),
+        )
+        val encoded = Json.encodeToString(ContentManifest.serializer(), manifest)
+        // The rest goes to what is stored around the manifest: its owner, the unit and its title.
+        assertTrue(encoded.length < MAX_CONTENT_METADATA_JSON_CHARS - 400_000, "Encoded ${encoded.length} characters")
     }
 
     @Test

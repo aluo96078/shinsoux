@@ -161,6 +161,27 @@ class PageLayerOrderTest {
     }
 
     @Test
+    fun aPhoneKeepsAnOpenReaderMountedBeneathThePageInFrontOfIt() {
+        val covered = state(PageLayer.LOCAL_EXTENSION, PageLayer.RECOVERING, readerOpen = true)
+        assertEquals<PageEntry?>(entry(PageLayer.LOCAL_EXTENSION), phoneReaderBeneath(covered))
+        assertEquals(entry(PageLayer.RECOVERING).destination, covered.destination, "the recovery is still the page shown")
+        assertNull(phoneReaderBeneath(state(PageLayer.LOCAL_EXTENSION, readerOpen = true)), "the reader is the page in front")
+        assertNull(phoneReaderBeneath(state(PageLayer.LOCAL_EXTENSION, PageLayer.RECOVERING)), "no reader is open")
+    }
+
+    @Test
+    fun anOpenReaderIsCoveredByAnyPageInFrontOfIt() {
+        // A library publication's reader.
+        assertTrue(openReaderCovered(state(PageLayer.LOCAL_EXTENSION, PageLayer.RECOVERING, readerOpen = true)))
+        assertFalse(openReaderCovered(state(PageLayer.DETAIL, PageLayer.LOCAL_EXTENSION, readerOpen = true)))
+        // The Browse section's own reader: a title a link opened while the chapter loaded.
+        assertTrue(openReaderCovered(state(PageLayer.DETAIL, readerOpen = true)))
+        assertTrue(openReaderCovered(state(PageLayer.PENDING, readerOpen = true)))
+        assertFalse(openReaderCovered(state(readerOpen = true)), "nothing in front of the Browse reader")
+        assertFalse(openReaderCovered(state(PageLayer.DETAIL)), "no reader is open")
+    }
+
+    @Test
     fun theDetailColumnHoldsTheHigherOfThePublicationAndTheDetail() {
         val arrangement = wideArrangement(state(PageLayer.DETAIL, PageLayer.LOCAL_EXTENSION), splitDetail = true)
         assertEquals(entry(PageLayer.LOCAL_EXTENSION), arrangement.side)
@@ -183,7 +204,8 @@ class PageLayerOrderTest {
     // The combinations the shell's own transitions can reach: a recovery is never replaced by the
     // pages opened over it, and More does not close a title that is still resolving.
 
-    private val navigator = AppNavigator(MainSection.LIBRARY, LibrarySelectionState())
+    private val selection = LibrarySelectionState()
+    private val navigator = AppNavigator(MainSection.LIBRARY, selection)
     private val current get() = navigator.state.value
 
     @Test
@@ -203,6 +225,44 @@ class PageLayerOrderTest {
             assertNull(current.stack.recovering, "Back cancels the recovery over $layer first")
             assertEquals(under, current.stack.pages.map { it.layer }, "$layer is left open")
         }
+    }
+
+    @Test
+    fun theBrowseReaderClosesTheDetailBesideItSoNothingIsDrawnOverIt() {
+        navigator.selectSection(MainSection.BROWSE)
+        navigator.openMangaDetail(1L, favorite = null)
+        navigator.setBrowseBackAvailable(true)
+        selection.selectChapters(setOf(11L, 12L))
+        navigator.browseSectionReaderOpening()
+        navigator.setBrowseSectionReaderOpen(true)
+        assertNull(current.stack.detail)
+        assertTrue(selection.state.value.chapterIds.isEmpty(), "the closed title's chapter selection goes with it")
+        for (split in listOf(false, true)) {
+            assertNull(wideArrangement(current, split).front, "split=$split")
+        }
+        // Back goes to the reader, not to a page drawn over it.
+        assertTrue(navigator.back())
+        assertEquals(1L, current.backRequests[BackTarget.BROWSE])
+    }
+
+    @Test
+    fun aTitleALinkOpensWhileTheChapterLoadsStaysInFrontOfTheReader() {
+        navigator.selectSection(MainSection.BROWSE)
+        navigator.browseSectionReaderOpening()
+        navigator.openMangaDetail(3L, favorite = null)
+        navigator.setBrowseSectionReaderOpen(true)
+        assertEquals(PageEntry.Detail(3L), current.stack.detail)
+        assertEquals(PageEntry.Detail(3L), wideArrangement(current, splitDetail = true).front)
+    }
+
+    @Test
+    fun theSameTitleReopenedByALinkWhileTheChapterLoadsStaysInFrontOfTheReader() {
+        navigator.selectSection(MainSection.BROWSE)
+        navigator.openMangaDetail(3L, favorite = null)
+        navigator.browseSectionReaderOpening()
+        navigator.openMangaDetail(3L, favorite = null)
+        navigator.setBrowseSectionReaderOpen(true)
+        assertEquals(PageEntry.Detail(3L), current.stack.detail)
     }
 
     @Test

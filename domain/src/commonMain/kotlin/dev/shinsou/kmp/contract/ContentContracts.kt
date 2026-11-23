@@ -9,6 +9,12 @@ public interface ImportedDocumentSource {
     public val byteSize: Long
     /** Returns exactly [byteCount] bytes or throws when the provider changed/truncated. */
     public fun read(offset: Long, byteCount: Int): ByteArray
+
+    /**
+     * Releases what [read] kept open (a file handle or descriptor) once the import is over. A
+     * source may keep one open for the whole import instead of reopening the file for every read.
+     */
+    public fun close(): Unit = Unit
 }
 
 public class ImportedDocument(
@@ -18,6 +24,15 @@ public class ImportedDocument(
     public constructor(name: String, contents: ByteArray) : this(name, ByteArrayImportedDocumentSource(contents))
 
     public val byteSize: Long get() = source.byteSize
+
+    /** See [ImportedDocumentSource.close]; never throws. */
+    public fun close() {
+        try {
+            source.close()
+        } catch (_: Exception) {
+            // Closing a read-only source loses nothing.
+        }
+    }
 
     /** Compatibility materialization for bounded images, text and legacy callers. */
     public val contents: ByteArray
@@ -60,6 +75,41 @@ public data class LocalImportResult(
     val pageCount: Int,
 )
 
+/** An encoding the user can choose for a TXT import. */
+public enum class LocalTextEncoding {
+    /** Simplified Chinese (GB18030, a superset of GBK and GB2312). */
+    GB18030,
+
+    /** Traditional Chinese. */
+    BIG5,
+
+    /** Unicode: a file that is valid UTF-8 but may also be legacy Chinese text. */
+    UTF_8,
+}
+
+/** One reading of a TXT import: its encoding and the start of the text it gives. */
+public data class LocalTextEncodingCandidate(
+    val encoding: LocalTextEncoding,
+    val preview: String,
+)
+
+/**
+ * A TXT file reads as valid text in more than one encoding and the import cannot tell which is
+ * right, the file is already in the library, or the user asked to choose: the user chooses. The message quotes
+ * the user's file name and text, so it is shown, never logged.
+ */
+public data class LocalTextEncodingQuestion(
+    val documentName: String,
+    val candidates: List<LocalTextEncodingCandidate>,
+    val recommended: LocalTextEncoding,
+    /** Encodings this file is already imported in. Choosing another replaces those titles. */
+    val imported: List<LocalTextEncoding>,
+)
+
+/** Keeps a reading already in the library, else takes the likelier one: never replaces a title. */
+public val KeepImportedTextEncoding: suspend (LocalTextEncodingQuestion) -> LocalTextEncoding? =
+    { question -> question.imported.firstOrNull() ?: question.recommended }
+
 /** Network/source operations needed by detail, updates, downloads, and the reader. */
 public interface ContentCallbacks {
     /** Copies selected image or ZIP-based comic documents into the built-in source 0. */
@@ -67,6 +117,25 @@ public interface ContentCallbacks {
         documents: List<ImportedDocument>,
         /** Explicit opt-in for rights-allowed TXT/EPUB bodies; ordinary import remains device-only. */
         syncContentBodies: Boolean = false,
+        /**
+         * Runs each library write of the import (a title's short content commit together with its
+         * Manga/Chapter rows, or their rollback) where the app orders its store writes. Parsing
+         * and hashing stay outside, so a large import does not hold up the writes queued behind it.
+         */
+        writeLibrary: suspend (suspend () -> Unit) -> Unit = { it() },
+        /**
+         * Asks which encoding a TXT is in ([LocalTextEncodingQuestion]); null skips that file.
+         * Called outside [writeLibrary], and it may wait for the user.
+         */
+        chooseTextEncoding: suspend (LocalTextEncodingQuestion) -> LocalTextEncoding? = KeepImportedTextEncoding,
+        /**
+         * The user asked to choose the encoding: [chooseTextEncoding] is asked for every TXT
+         * without a byte order mark that has more than one valid reading (UTF-8, GB18030, Big5),
+         * also where the import would be sure. Detection cannot tell every legacy text from valid
+         * UTF-8, and the picked file is not kept, so this is how a wrong reading is corrected:
+         * importing the file again and choosing replaces the title it has.
+         */
+        alwaysChooseTextEncoding: Boolean = false,
     ): List<LocalImportResult> = emptyList()
 
     public suspend fun refreshLibrary(mangaIds: Set<Long>)

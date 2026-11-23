@@ -80,6 +80,8 @@ public class PublicationReaderEvents(
      * a page the user already left (still drawn while it animates away) opens nothing.
      */
     internal val isShown: () -> Boolean = { true },
+    /** Told when the user starts opening a chapter in the reader, before it loads. */
+    internal val onOpening: () -> Unit = {},
 )
 
 /** The reader's loading screen over a publication page ([ExtensionPublicationState.readerCover]). */
@@ -241,6 +243,9 @@ internal class ExtensionPublicationState(
     /** Whether the shell still shows this page ([PublicationReaderEvents.isShown]); replaced on every composition. */
     var isShown: () -> Boolean = { true }
 
+    /** Told when the user starts opening a chapter ([PublicationReaderEvents.onOpening]); replaced on every composition. */
+    var onReaderOpening: () -> Unit = {}
+
     /**
      * The page's parent recomputed [next] (where a favorite goes, whether the library has it):
      * the favorite button follows it from now on.
@@ -316,6 +321,7 @@ internal class ExtensionPublicationState(
         if (restoring == null) unitChosenByUser = true
         busyUnitId = selection.unit.remoteId
         if (openReader) openingReaderUnitId = selection.unit.remoteId
+        if (openReader && restoring == null) onReaderOpening()
         readerClosedWhileOpening = false
         operationMessage = null
         operationFailed = false

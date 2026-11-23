@@ -49,8 +49,10 @@ public class QualityPlugin : Plugin<Project> {
                 filters {
                     excludes {
                         packages("dev.aluo.shinsoux.generated.resources")
-                        // SQLDelight's generated query code (SqlDelightPlugin): its .sq files live in `*.sql` packages.
-                        packages("*.sql")
+                        // SQLDelight's generated query code (SqlDelightPlugin), by the packages the module
+                        // scripts give their databases. Not `*.sql`: :data-content's hand-written
+                        // statement layer lives in `dev.shinsou.kmp.content.sql` and stays measured.
+                        packages(*SQLDELIGHT_GENERATED_PACKAGES)
                         classes("*ComposableSingletons*", "*.BuildInfoKt")
                         annotatedBy("androidx.compose.runtime.Composable")
                     }
@@ -105,6 +107,17 @@ private fun java.io.File.isGenerated(): Boolean = invariantSeparatorsPath.contai
 
 /** The module whose Kover report merges all the others'. */
 private const val APP_PROJECT_PATH = ":composeApp"
+
+/**
+ * The packages SQLDelight generates code into, one per database the module scripts declare; left
+ * out of Kover. SqlDelightPlugin fails the configuration of a database whose package is not here.
+ */
+internal val SQLDELIGHT_GENERATED_PACKAGES: Array<String> = arrayOf(
+    "dev.shinsou.kmp.annotation.sql",
+    "dev.shinsou.kmp.content.hotstate.sql",
+    "dev.shinsou.kmp.sync.v3.sql",
+    "dev.shinsou.kmp.translation.sql",
+)
 
 /**
  * Kover ratchet (0006 R2-5): the lowest merged line coverage, in percent, that

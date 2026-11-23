@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,17 +43,17 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
+import dev.shinsou.kmp.content.acquisition.textChapterHeadingStarts
 import dev.shinsou.kmp.contract.ReaderRemoteImageFetcher
 import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.ReadingMode
@@ -61,14 +62,21 @@ import dev.shinsou.kmp.reader.ReaderTapAction
 import dev.shinsou.kmp.domain.model.ReadingLocator
 import dev.shinsou.kmp.reader.readerLogicalPageIndex
 import dev.shinsou.kmp.reader.readerPhysicalPageIndex
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 
 internal val NOVEL_READER_BACKGROUND: Color = Color(0xFF211D1B)
 internal val NOVEL_READER_TEXT: Color = Color(0xFFF2E9DE)
@@ -83,6 +91,14 @@ internal fun isNovelContinuousMode(mode: ReadingMode): Boolean = when (mode) {
     ReadingMode.CONTINUOUS_VERTICAL,
     -> true
 }
+
+/**
+ * A key that turns pages and that a covered reader swallows, so nothing behind the page in front
+ * moves. Volume, Back and Escape are not among them: they belong to the platform and that page.
+ */
+internal fun readerPagingKeyIsSwallowedWhileCovered(key: Key): Boolean = isReaderNavigationKey(key) &&
+    key != Key.VolumeDown && key != Key.VolumeUp &&
+    key != Key.Escape && key != Key.Back && key != Key.NavigatePrevious
 
 internal fun isReaderNavigationKey(key: Key): Boolean = when (key) {
     Key.VolumeDown,
@@ -260,6 +276,19 @@ internal sealed interface NovelVisualPage {
         override val sourceStartUtf16: Int,
         override val sourceEndUtf16: Int,
     ) : NovelVisualPage
+
+    /**
+     * Stands for one of the [estimatedCount] pages a section of a long text is taken to fill
+     * until it is measured (see [NovelSectionedPagination]); shown blank, and replaced by the
+     * section's real pages as soon as the reader gets near it.
+     */
+    data class Pending(
+        val sectionIndex: Int,
+        val ordinal: Int,
+        val estimatedCount: Int,
+        override val sourceStartUtf16: Int,
+        override val sourceEndUtf16: Int,
+    ) : NovelVisualPage
 }
 
 internal data class NovelViewportPosition(
@@ -299,6 +328,10 @@ internal fun NovelReaderSurface(
     initialVisualPageCount: Int?,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    /** [requestedPageIndex] is the slider taken to its end, not a page turn onto the last page. */
+    requestedDocumentEnd: Boolean = false,
+    /** [initialLocator] is a saved position ([dev.shinsou.kmp.domain.content.UnifiedReaderContent.initialLocatorSaved]). */
+    initialLocatorSaved: Boolean = false,
     navigationAction: ReaderTapAction? = null,
     navigationRequestKey: Long = 0L,
     onPageChanged: (pageIndex: Int, pageCount: Int) -> Unit,
@@ -326,7 +359,13 @@ internal fun NovelReaderSurface(
     )
     // Offsets below are offsets in the text on screen.
     val currentSourcePosition = remember(shownText, initialLocator) {
-        val sourceOffset = initialLocator.resolveOffset(canonicalText) ?: 0
+        val sourceOffset = novelResumeOffset(
+            canonicalText,
+            initialLocator,
+            initialLocatorSaved,
+            initialVisualPageIndex,
+            initialVisualPageCount,
+        )
         NovelSourcePosition(display?.toDisplay(sourceOffset) ?: sourceOffset)
     }
 
@@ -339,31 +378,24 @@ internal fun NovelReaderSurface(
         val pageTextHeight = (maxHeight - 88.dp).coerceAtLeast(1.dp)
         val widthPixels = with(density) { columnWidth.roundToPx() }.coerceAtLeast(1)
         val heightPixels = with(density) { pageTextHeight.roundToPx() }.coerceAtLeast(1)
-        val pages = remember(
-            shownText,
-            widthPixels,
-            heightPixels,
-            textStyle,
-            textMeasurer,
-        ) {
-            paginateNovelContent(
-                source = shownText,
-                textMeasurer = textMeasurer,
-                textStyle = textStyle,
-                maxWidthPixels = widthPixels,
-                maxHeightPixels = heightPixels,
-            )
+        val geometry = remember(textMeasurer, textStyle, widthPixels, heightPixels) {
+            NovelPageGeometry(textMeasurer, textStyle, widthPixels, heightPixels)
         }
-        val locatorPage = pages.indexOfLast { page ->
-            page.sourceStartUtf16 <= currentSourcePosition.offsetUtf16
-        }
-            .coerceAtLeast(0)
+        val interaction = remember { NovelReaderInteraction() }
+        // A long text has nothing to show for the moment its sections are being found.
+        val shown = rememberNovelShownPages(shownText, geometry, currentSourcePosition, interaction)
+            ?: return@BoxWithConstraints
+        val pages = shown.pages
+        val locatorPage = novelPageIndexForOffset(pages, currentSourcePosition.offsetUtf16)
         // Consume a saved visual page only for this first pagination. Reflows recreate the keyed
         // reader from currentSourcePosition and keep the stable source position instead.
         var initialVisualPageConsumed by remember(shownText, initialLocator) {
             mutableStateOf(false)
         }
+        // A long text's page numbers are estimates until all of it is measured, so a saved one
+        // says nothing about where its reader was: the locator alone restores that.
         val restoredVisualPage = initialVisualPageIndex
+            ?.takeIf { shown.pagination == null }
             ?.takeIf { initialVisualPageCount == null || initialVisualPageCount == pages.size }
             ?.takeUnless { initialVisualPageConsumed }
         val initialPage = (restoredVisualPage ?: locatorPage).coerceIn(pages.indices)
@@ -383,7 +415,7 @@ internal fun NovelReaderSurface(
         }
 
         NovelReaderPages(
-            pages = pages,
+            shown = shown,
             shownText = shownText,
             navigation = navigation,
             display = display,
@@ -397,9 +429,11 @@ internal fun NovelReaderSurface(
             currentSourcePosition = currentSourcePosition,
             requestedPageIndex = requestedPageIndex,
             pageRequestSerial = pageRequestSerial,
+            requestedDocumentEnd = requestedDocumentEnd,
             navigationAction = navigationAction,
             navigationRequestKey = navigationRequestKey,
             remoteAssetScope = remoteAssetScope,
+            onScrollingChanged = { interaction.scrolling = it },
             onPageChanged = onPageChanged,
             onLocatorChanged = onLocatorChanged,
             onNavigationBoundary = onNavigationBoundary,
@@ -408,10 +442,248 @@ internal fun NovelReaderSurface(
     }
 }
 
+/** The pages on screen and, for a long text, the layout still measuring them. */
+private class NovelShownPages(
+    val pages: List<NovelVisualPage>,
+    val pagination: NovelSectionedPagination?,
+) {
+    /** Which of the long text's page lists this is; callbacks of a pager showing an older one are stale. */
+    val generation: Int = pagination?.generation ?: 0
+
+    val stale: Boolean get() = pagination != null && pagination.generation != generation
+
+    /** How a long text's pages are numbered to the user; null for a text measured whole, numbered as listed. */
+    val numbering: NovelPageNumbering? = pagination?.numbering
+}
+
+/**
+ * The page of the list a request for page [requested] of the numbering shown is for. The slider
+ * at its end ([toDocumentEnd]) asks for the list's last page, whatever the numbering makes of it.
+ */
+private fun NovelShownPages.listIndexOfRequest(requested: Int?, toDocumentEnd: Boolean, currentListIndex: Int): Int? {
+    val numbering = numbering
+    // Asked for an earlier page than the one on screen (a page turned back): a section shown as
+    // one page is entered at its end.
+    val backward = numbering != null && currentListIndex >= 0 && requested != null &&
+        requested < numbering.shown(currentListIndex)
+    return when {
+        requested == null -> null
+        toDocumentEnd -> pages.lastIndex
+        else -> numbering?.list(requested, backward) ?: requested
+    }
+}
+
+/** The page of a list last reported ([rememberNumberedPageReports]). */
+private class NovelLastReport(var listIndex: Int = -1)
+
+/** Page reports to the reader's shell, in the numbering shown to the user. */
+private class NovelPageReports(
+    val page: (pageIndex: Int, pageCount: Int) -> Unit,
+    val locator: (ReadingLocator, pageIndex: Int, pageCount: Int) -> Unit,
+    /** The page of the list last reported; -1 before any. */
+    val currentListIndex: () -> Int,
+)
+
+/**
+ * [onPageChanged] and [onLocatorChanged] for page indexes of [shown]'s list, numbered as shown to
+ * the user. When the numbering is renewed while the list stays (the count came nearer the real
+ * one), the page last reported is reported again in it: the shell's total follows, and its page
+ * stays the page on screen.
+ */
+@Composable
+private fun rememberNumberedPageReports(
+    shown: NovelShownPages,
+    onPageChanged: (pageIndex: Int, pageCount: Int) -> Unit,
+    onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int) -> Unit,
+): NovelPageReports {
+    val numbering = shown.numbering
+    // What was last reported, of this list only: a new list (a new generation) has other indexes.
+    val last = remember(shown.pagination, shown.generation) { NovelLastReport() }
+    val latestOnPageChanged by rememberUpdatedState(onPageChanged)
+    // Only the toolbar follows: the reader has not moved, so there is no progress to write (a
+    // write marks the title for sync, and at a chapter's end completes it again). The progress
+    // kept is in the numbering of the last page arrived at, and once the layout settles the
+    // reader is recreated on the whole list and reports its place in the final numbering.
+    LaunchedEffect(numbering) {
+        val index = last.listIndex
+        if (numbering != null && index >= 0) latestOnPageChanged(numbering.shown(index), numbering.count)
+    }
+    return NovelPageReports(
+        page = { index, count ->
+            last.listIndex = index
+            if (numbering == null) onPageChanged(index, count) else onPageChanged(numbering.shown(index), numbering.count)
+        },
+        locator = { locator, index, count ->
+            last.listIndex = index
+            if (numbering == null) {
+                onLocatorChanged(locator, index, count)
+            } else {
+                onLocatorChanged(locator, numbering.shown(index), numbering.count)
+            }
+        },
+        currentListIndex = { last.listIndex },
+    )
+}
+
+/** Whether the reader is being scrolled or is turning a page: no time to measure or swap pages under it. */
+private class NovelReaderInteraction(var scrolling: Boolean = false)
+
+/**
+ * The pages of [shownText] for [geometry]. A text up to [NOVEL_SECTIONED_TEXT_THRESHOLD] long is
+ * measured whole, here and now; a longer one a section at a time ([NovelSectionedPagination]),
+ * and is null for the moment its sections are being found.
+ */
+@Composable
+private fun rememberNovelShownPages(
+    shownText: String,
+    geometry: NovelPageGeometry,
+    position: NovelSourcePosition,
+    interaction: NovelReaderInteraction,
+): NovelShownPages? {
+    if (shownText.length <= NOVEL_SECTIONED_TEXT_THRESHOLD) {
+        val pages = remember(shownText, geometry) { paginateNovelContent(shownText, geometry) }
+        return NovelShownPages(pages, pagination = null)
+    }
+    val pagination = rememberNovelSectionedPagination(shownText, geometry, position, interaction)
+    return pagination?.let { NovelShownPages(it.pages, it) }
+}
+
+@Composable
+private fun rememberNovelSectionedPagination(
+    shownText: String,
+    geometry: NovelPageGeometry,
+    position: NovelSourcePosition,
+    interaction: NovelReaderInteraction,
+    workDispatcher: CoroutineDispatcher = Dispatchers.Default,
+): NovelSectionedPagination? {
+    // Finding the chapters reads the whole text: off the main thread, which only measures.
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    var sections by remember(shownText) { mutableStateOf<NovelTextSections?>(null) }
+    LaunchedEffect(shownText, workDispatcher) {
+        sections = withContext(workDispatcher) {
+            NovelTextSections(
+                starts = novelSectionStarts(shownText, textChapterHeadingStarts(shownText) { ensureActive() }),
+                // What identifies the text to [NovelPageCountMemory], read here with the rest of it.
+                textHash = shownText.hashCode(),
+            )
+        }
+    }
+    // A new geometry is a new layout, begun at the section the reader is in.
+    val pagination = remember(sections, geometry) {
+        sections?.let { found ->
+            NovelSectionedPagination(
+                text = shownText,
+                sectionStarts = found.starts,
+                layout = { sectionText, sourceOffset -> MeasuredNovelPageSteps(sectionText, sourceOffset, geometry, quickBreaks = true) },
+                focusOffsetUtf16 = position.offsetUtf16,
+                rememberedCounts = NovelPageCountMemory.countsFor(
+                    key = NovelPageCountKey(
+                        text = shownText.length to found.textHash,
+                        textStyle = geometry.textStyle,
+                        sizePixels = geometry.maxWidthPixels to geometry.maxHeightPixels,
+                        // sp become pixels by these: another font scale or display is another layout.
+                        density = density.density to density.fontScale,
+                        layoutDirection = layoutDirection,
+                    ),
+                    sections = found.starts.size,
+                ),
+            )
+        }
+    }
+    LaunchedEffect(pagination) {
+        if (pagination != null) measureNovelSectionsBetweenFrames(pagination, interaction)
+    }
+    return pagination
+}
+
+/** Where the sections of a long text begin ([novelSectionStarts]), and its hash. */
+private class NovelTextSections(val starts: IntArray, val textHash: Int)
+
+/** A text and the layout its pages were measured under ([NovelPageCountMemory]). */
+private data class NovelPageCountKey(
+    /** The text's length and hash. */
+    val text: Pair<Int, Int>,
+    val textStyle: TextStyle,
+    val sizePixels: Pair<Int, Int>,
+    /** The density and font scale sp are resolved with. */
+    val density: Pair<Float, Float>,
+    val layoutDirection: LayoutDirection,
+)
+
+/** Time per frame given to measuring the rest of a long text while its reader is idle. */
+private val NOVEL_LAYOUT_SLICE: Duration = 4.milliseconds
+private const val NOVEL_LAYOUT_MAX_SKIPPED_FRAMES: Int = 8
+
+/**
+ * Measures the rest of a long text on the composing thread, where text is measured, a few
+ * milliseconds a frame and never while the reader scrolls. A device on which one page takes longer
+ * than that is left as many frames to itself. Ends once every page is measured and shown, or
+ * with the caller.
+ */
+private suspend fun measureNovelSectionsBetweenFrames(
+    pagination: NovelSectionedPagination,
+    interaction: NovelReaderInteraction,
+) {
+    var framesToSkip = 0
+    while (!pagination.settled) {
+        withFrameNanos { }
+        when {
+            interaction.scrolling -> Unit
+            framesToSkip > 0 -> framesToSkip--
+            else -> {
+                val started = TimeSource.Monotonic.markNow()
+                pagination.layOutMore { started.elapsedNow() < NOVEL_LAYOUT_SLICE }
+                pagination.publishIfUseful()
+                framesToSkip = ((started.elapsedNow() / NOVEL_LAYOUT_SLICE).toInt() - 1)
+                    .coerceIn(0, NOVEL_LAYOUT_MAX_SKIPPED_FRAMES)
+            }
+        }
+    }
+}
+
+/**
+ * The page request the pagers are to act on. A request for a placeholder of a long text is acted
+ * on here instead: its section is measured and the pagers are recreated on the page asked for,
+ * where scrolling them to the placeholder would stop on whichever one came into view first.
+ */
+@Composable
+private fun requestedNovelPage(
+    shown: NovelShownPages,
+    requestedPageIndex: Int?,
+    pageRequestSerial: Long,
+    requestedDocumentEnd: Boolean,
+    currentSourcePosition: NovelSourcePosition,
+    /** The page asked for in the numbering shown, which can tell a section's pages apart where the list cannot. */
+    requestedShownIndex: Int?,
+): Int? {
+    val pagination = shown.pagination ?: return requestedPageIndex
+    // A request older than this layout has been acted on already.
+    val firstSerial = remember(pagination) { pageRequestSerial }
+    val target = requestedPageIndex?.takeIf { pageRequestSerial != firstSerial }?.coerceIn(shown.pages.indices)
+    val pending = target?.let { shown.pages[it] as? NovelVisualPage.Pending }
+    // Where in its section the page asked for is: a section measured since it was listed has
+    // more pages than placeholders, and the one asked for is found among them in proportion.
+    val within = requestedShownIndex?.let { shown.numbering?.positionInSection(it) }
+    LaunchedEffect(pagination, pageRequestSerial) {
+        if (pending != null) {
+            currentSourcePosition.offsetUtf16 = pagination.arrive(
+                page = pending,
+                fromOffsetUtf16 = currentSourcePosition.offsetUtf16,
+                // Only the slider taken to its end asks for the last page, however many the
+                // section has; a page turn onto its one placeholder shows its first page.
+                toEnd = requestedDocumentEnd && target == shown.pages.lastIndex,
+                within = within,
+            )
+        }
+    }
+    return if (pending != null) null else requestedPageIndex
+}
+
 /** The pages of one paginated text, read continuously or paged; rebuilt whenever the text or its layout changes. */
 @Composable
 private fun NovelReaderPages(
-    pages: List<NovelVisualPage>,
+    shown: NovelShownPages,
     shownText: String,
     navigation: PlainTextNavigation,
     display: dev.shinsou.kmp.translation.TranslationDisplayText?,
@@ -425,14 +697,27 @@ private fun NovelReaderPages(
     currentSourcePosition: NovelSourcePosition,
     requestedPageIndex: Int?,
     pageRequestSerial: Long,
+    requestedDocumentEnd: Boolean,
     navigationAction: ReaderTapAction?,
     navigationRequestKey: Long,
     remoteAssetScope: ReaderRemoteImageFetcher?,
+    onScrollingChanged: (Boolean) -> Unit,
     onPageChanged: (pageIndex: Int, pageCount: Int) -> Unit,
     onLocatorChanged: (ReadingLocator, pageIndex: Int, pageCount: Int) -> Unit,
     onNavigationBoundary: (ReaderTapAction) -> Unit,
     onTapAction: (ReaderTapAction) -> Unit,
 ) {
+    val pages = shown.pages
+    // Pages are reported, and asked for, in the numbering shown to the user ([NovelPageNumbering]).
+    val reports = rememberNumberedPageReports(shown, onPageChanged, onLocatorChanged)
+    val pagerRequestedPageIndex = requestedNovelPage(
+        shown,
+        shown.listIndexOfRequest(requestedPageIndex, requestedDocumentEnd, reports.currentListIndex()),
+        pageRequestSerial,
+        requestedDocumentEnd,
+        currentSourcePosition,
+        requestedPageIndex,
+    )
     key(
         navigation.scope,
         widthPixels,
@@ -442,6 +727,8 @@ private fun NovelReaderPages(
         settings.novelLineHeightMultiplier,
         settings.readingMode,
         pages.size,
+        // A long text's pages are replaced as they are measured: each list is another document too.
+        shown.generation,
         // Another text on screen (a translation switched on or off) is another document to
         // the pager and list states, even when it happens to paginate into as many pages.
         display,
@@ -451,7 +738,7 @@ private fun NovelReaderPages(
                 pages = pages,
                 initialPage = initialPage,
                 initialPageOffsetFraction = initialPageOffsetFraction,
-                requestedPageIndex = requestedPageIndex,
+                requestedPageIndex = pagerRequestedPageIndex,
                 pageRequestSerial = pageRequestSerial,
                 navigationAction = navigationAction,
                 navigationRequestKey = navigationRequestKey,
@@ -460,26 +747,37 @@ private fun NovelReaderPages(
                 columnWidth = columnWidth,
                 textStyle = textStyle,
                 remoteAssetScope = remoteAssetScope,
+                onScrollingChanged = onScrollingChanged,
                 onPageChanged = { index ->
-                    onPageChanged(index, pages.size)
+                    // Scrolled onto a placeholder, the list is recreated where its section begins
+                    // (or ends, scrolled up to it): there is no page to report until then.
+                    if (!shown.stale && shown.arrivedOn(index, currentSourcePosition)) {
+                        reports.page(index, pages.size)
+                    }
                 },
                 onViewportObserved = { viewport ->
-                    currentSourcePosition.offsetUtf16 = novelViewportSourceOffset(
-                        source = shownText,
-                        pages = pages,
-                        viewport = viewport,
-                    )
+                    // A position in a placeholder is an estimate, and would make the arrival on it
+                    // look like one from inside it: the reader stays where it last was on a page.
+                    if (!shown.stale && !shown.onPlaceholder(viewport)) {
+                        currentSourcePosition.offsetUtf16 = novelViewportSourceOffset(
+                            source = shownText,
+                            pages = pages,
+                            viewport = viewport,
+                        )
+                    }
                 },
                 onViewportChanged = { viewport ->
-                    val pageIndex = if (viewport.atDocumentEnd) pages.lastIndex else viewport.pageIndex
-                    onPageChanged(pageIndex, pages.size)
-                    val sourceOffset = novelViewportSourceOffset(
-                        source = shownText,
-                        pages = pages,
-                        viewport = viewport,
-                    )
-                    currentSourcePosition.offsetUtf16 = sourceOffset
-                    onLocatorChanged(navigation.locatorForOffset(display?.toSource(sourceOffset) ?: sourceOffset), pageIndex, pages.size)
+                    if (!shown.stale && !shown.onPlaceholder(viewport)) {
+                        val pageIndex = if (viewport.atDocumentEnd) pages.lastIndex else viewport.pageIndex
+                        reports.page(pageIndex, pages.size)
+                        val sourceOffset = novelViewportSourceOffset(
+                            source = shownText,
+                            pages = pages,
+                            viewport = viewport,
+                        )
+                        currentSourcePosition.offsetUtf16 = sourceOffset
+                        reports.locator(navigation.locatorForOffset(display?.toSource(sourceOffset) ?: sourceOffset), pageIndex, pages.size)
+                    }
                 },
                 onNavigationBoundary = onNavigationBoundary,
                 onTapAction = onTapAction,
@@ -488,7 +786,7 @@ private fun NovelReaderPages(
             PagedNovelReader(
                 pages = pages,
                 initialPage = initialPage,
-                requestedPageIndex = requestedPageIndex,
+                requestedPageIndex = pagerRequestedPageIndex,
                 pageRequestSerial = pageRequestSerial,
                 navigationAction = navigationAction,
                 navigationRequestKey = navigationRequestKey,
@@ -496,15 +794,56 @@ private fun NovelReaderPages(
                 columnWidth = columnWidth,
                 textStyle = textStyle,
                 remoteAssetScope = remoteAssetScope,
+                onScrollingChanged = onScrollingChanged,
                 onPageChanged = { index ->
-                    currentSourcePosition.offsetUtf16 = novelPagedSourceOffset(pages, index)
-                    reportNovelPage(index, pages, navigation, display, onPageChanged, onLocatorChanged)
+                    if (!shown.stale && shown.arrivedOn(index, currentSourcePosition)) {
+                        currentSourcePosition.offsetUtf16 = novelPagedSourceOffset(pages, index)
+                        reportNovelPage(index, pages, navigation, display, reports.page, reports.locator)
+                    }
                 },
                 onNavigationBoundary = onNavigationBoundary,
                 onTapAction = onTapAction,
             )
         }
     }
+}
+
+/** The viewport a continuous reader saw last, and the one it reported last. */
+private class NovelViewportReports {
+    var last: NovelViewportPosition? = null
+    private var reported: NovelViewportPosition? = null
+
+    /** Reports [last] unless it is reported already. */
+    fun flush(report: (NovelViewportPosition) -> Unit) {
+        val viewport = last ?: return
+        if (viewport == reported) return
+        reported = viewport
+        report(viewport)
+    }
+}
+
+/** Whether [viewport] begins on a placeholder of a long text, or ends the document on one. */
+private fun NovelShownPages.onPlaceholder(viewport: NovelViewportPosition): Boolean {
+    val index = if (viewport.atDocumentEnd) pages.lastIndex else viewport.pageIndex
+    return pages.getOrNull(index) is NovelVisualPage.Pending ||
+        pages.getOrNull(viewport.pageIndex) is NovelVisualPage.Pending
+}
+
+/**
+ * The pager or list arrived on page [index]. On a placeholder of a long text its section is
+ * measured ([NovelSectionedPagination.arrive], in the direction of travel from [position]) and
+ * [position] moved to the page to show, where the readers are recreated; this is then false:
+ * there is no page to report yet. Otherwise the layout is told where its reader is, and this is true.
+ */
+private fun NovelShownPages.arrivedOn(index: Int, position: NovelSourcePosition): Boolean {
+    val pending = pages.getOrNull(index) as? NovelVisualPage.Pending
+    val layout = pagination
+    when {
+        layout == null -> Unit
+        pending != null -> position.offsetUtf16 = layout.arrive(pending, fromOffsetUtf16 = position.offsetUtf16)
+        else -> layout.shown(index)
+    }
+    return pending == null
 }
 
 private fun reportNovelPage(
@@ -562,6 +901,7 @@ private fun ContinuousNovelReader(
     columnWidth: Dp,
     textStyle: TextStyle,
     remoteAssetScope: ReaderRemoteImageFetcher?,
+    onScrollingChanged: (Boolean) -> Unit,
     onPageChanged: (Int) -> Unit,
     onViewportObserved: (NovelViewportPosition) -> Unit,
     onViewportChanged: (NovelViewportPosition) -> Unit,
@@ -586,14 +926,19 @@ private fun ContinuousNovelReader(
     val latestOnViewportChanged by rememberUpdatedState(onViewportChanged)
     val latestOnNavigationBoundary by rememberUpdatedState(onNavigationBoundary)
     val latestOnTapAction by rememberUpdatedState(onTapAction)
+    ReportNovelScrolling(onScrollingChanged) { listState.isScrollInProgress }
     // Restoration and external page requests share one cancellable effect. A new request cancels
     // an in-flight fractional restore instead of letting the two scroll operations race.
     LaunchedEffect(listState, pageRequestSerial, pages.size) {
         if (pageRequestSerial != initialPageRequestSerial) {
             val target = requestedPageIndex?.coerceIn(pages.indices)
             if (target != null) {
-                if (animatePageTransitions) listState.animateScrollToItem(target)
-                else listState.scrollToItem(target)
+                // Not animated past a placeholder, which would stop the jump at its section.
+                if (animatePageTransitions && !novelPendingBetween(pages, listState.firstVisibleItemIndex, target)) {
+                    listState.animateScrollToItem(target)
+                } else {
+                    listState.scrollToItem(target)
+                }
             }
             restorationReady = true
             return@LaunchedEffect
@@ -661,10 +1006,15 @@ private fun ContinuousNovelReader(
             .distinctUntilChanged()
             .collect(latestOnPageChanged)
     }
+    // The viewport last seen and the one last reported; leaving reports the one in between at once.
+    val viewports = remember(listState, pages.size) { NovelViewportReports() }
+    val progressFlush = LocalReaderProgressFlush.current
+    DisposableEffect(viewports, progressFlush) {
+        val unregister = progressFlush?.register { viewports.flush(latestOnViewportChanged) }
+        onDispose { unregister?.invoke() }
+    }
     LaunchedEffect(listState, pages.size) {
         var settledReport: kotlinx.coroutines.Job? = null
-        var lastViewport: NovelViewportPosition? = null
-        var lastReportedViewport: NovelViewportPosition? = null
         try {
             snapshotFlow {
                 if (!restorationReady) {
@@ -693,18 +1043,17 @@ private fun ContinuousNovelReader(
                     )
                     // Keep reflow state current on every scroll frame, but avoid writing portable
                     // progress until the viewport has been still for a short interval.
-                    lastViewport = viewport
+                    viewports.last = viewport
                     latestOnViewportObserved(viewport)
                     settledReport?.cancel()
                     settledReport = launch {
                         delay(350)
-                        latestOnViewportChanged(viewport)
-                        lastReportedViewport = viewport
+                        viewports.flush(latestOnViewportChanged)
                     }
                 }
         } finally {
             settledReport?.cancel()
-            lastViewport?.takeIf { it != lastReportedViewport }?.let(latestOnViewportChanged)
+            viewports.flush(latestOnViewportChanged)
         }
     }
     LazyColumn(
@@ -717,7 +1066,11 @@ private fun ContinuousNovelReader(
         itemsIndexed(
             pages,
             key = { index, page ->
-                val kind = if (page is NovelVisualPage.Text) "text" else "image"
+                val kind = when (page) {
+                    is NovelVisualPage.Text -> "text"
+                    is NovelVisualPage.Image -> "image"
+                    is NovelVisualPage.Pending -> "pending"
+                }
                 "${page.sourceStartUtf16}:$index:$kind"
             },
         ) { _, page ->
@@ -726,8 +1079,12 @@ private fun ContinuousNovelReader(
                 columnWidth = columnWidth,
                 textStyle = textStyle,
                 remoteAssetScope = remoteAssetScope,
-                modifier = Modifier
-                    .fillParentMaxWidth(),
+                // A placeholder has no text to give it a height: it takes a screenful.
+                modifier = if (page is NovelVisualPage.Pending) {
+                    Modifier.fillParentMaxWidth().fillParentMaxHeight()
+                } else {
+                    Modifier.fillParentMaxWidth()
+                },
             )
         }
     }
@@ -745,6 +1102,7 @@ private fun PagedNovelReader(
     columnWidth: Dp,
     textStyle: TextStyle,
     remoteAssetScope: ReaderRemoteImageFetcher?,
+    onScrollingChanged: (Boolean) -> Unit,
     onPageChanged: (Int) -> Unit,
     onNavigationBoundary: (ReaderTapAction) -> Unit,
     onTapAction: (ReaderTapAction) -> Unit,
@@ -761,6 +1119,7 @@ private fun PagedNovelReader(
             columnWidth = columnWidth,
             textStyle = textStyle,
             remoteAssetScope = remoteAssetScope,
+            onScrollingChanged = onScrollingChanged,
             onPageChanged = onPageChanged,
             onNavigationBoundary = onNavigationBoundary,
             onTapAction = onTapAction,
@@ -777,10 +1136,27 @@ private fun PagedNovelReader(
             columnWidth = columnWidth,
             textStyle = textStyle,
             remoteAssetScope = remoteAssetScope,
+            onScrollingChanged = onScrollingChanged,
             onPageChanged = onPageChanged,
             onNavigationBoundary = onNavigationBoundary,
             onTapAction = onTapAction,
         )
+    }
+}
+
+/**
+ * Tells [onScrollingChanged] whether the pager or list is moving, and that it is not once it has
+ * left the screen.
+ */
+@Composable
+private fun ReportNovelScrolling(onScrollingChanged: (Boolean) -> Unit, scrolling: () -> Boolean) {
+    val latestOnScrollingChanged by rememberUpdatedState(onScrollingChanged)
+    val latestScrolling by rememberUpdatedState(scrolling)
+    LaunchedEffect(Unit) {
+        snapshotFlow { latestScrolling() }.distinctUntilChanged().collect { latestOnScrollingChanged(it) }
+    }
+    DisposableEffect(Unit) {
+        onDispose { latestOnScrollingChanged(false) }
     }
 }
 
@@ -797,11 +1173,15 @@ private fun InstantPagedNovelReader(
     columnWidth: Dp,
     textStyle: TextStyle,
     remoteAssetScope: ReaderRemoteImageFetcher?,
+    onScrollingChanged: (Boolean) -> Unit,
     onPageChanged: (Int) -> Unit,
     onNavigationBoundary: (ReaderTapAction) -> Unit,
     onTapAction: (ReaderTapAction) -> Unit,
 ) {
     var pageIndex by remember(pages, initialPage) { mutableIntStateOf(initialPage) }
+    // A page dragged is a page being turned: nothing is measured or swapped under it meanwhile.
+    var dragging by remember { mutableStateOf(false) }
+    ReportNovelScrolling(onScrollingChanged) { dragging }
     val initialPageRequestSerial = remember { pageRequestSerial }
     val initialNavigationRequestKey = remember { navigationRequestKey }
     val latestOnPageChanged by rememberUpdatedState(onPageChanged)
@@ -841,7 +1221,7 @@ private fun InstantPagedNovelReader(
             .fillMaxSize()
             .novelTapZones(settings.readingMode, onTapAction)
             .novelWheelPaging(settings.readingMode, onTapAction)
-            .novelHorizontalDrag(settings.readingMode, onTapAction)
+            .novelHorizontalDrag(settings.readingMode, onTapAction) { dragging = it }
             .padding(vertical = 44.dp),
     )
 }
@@ -860,6 +1240,7 @@ private fun AnimatedPagedNovelReader(
     columnWidth: Dp,
     textStyle: TextStyle,
     remoteAssetScope: ReaderRemoteImageFetcher?,
+    onScrollingChanged: (Boolean) -> Unit,
     onPageChanged: (Int) -> Unit,
     onNavigationBoundary: (ReaderTapAction) -> Unit,
     onTapAction: (ReaderTapAction) -> Unit,
@@ -872,6 +1253,7 @@ private fun AnimatedPagedNovelReader(
     val latestOnPageChanged by rememberUpdatedState(onPageChanged)
     val latestOnNavigationBoundary by rememberUpdatedState(onNavigationBoundary)
     val latestOnTapAction by rememberUpdatedState(onTapAction)
+    ReportNovelScrolling(onScrollingChanged) { pagerState.isScrollInProgress }
     DisposableEffect(pagerState, pages.size, settings.readingMode) {
         onDispose {
             latestOnPageChanged(
@@ -883,7 +1265,13 @@ private fun AnimatedPagedNovelReader(
         if (pageRequestSerial == initialPageRequestSerial) return@LaunchedEffect
         val logicalTarget = requestedPageIndex?.coerceIn(pages.indices) ?: return@LaunchedEffect
         val target = readerPhysicalPageIndex(logicalTarget, pages.size, settings.readingMode)
-        if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
+        val current = readerLogicalPageIndex(pagerState.currentPage, pages.size, settings.readingMode)
+        when {
+            pagerState.currentPage == target -> Unit
+            // Not animated past a placeholder, which would stop the jump at its section.
+            novelPendingBetween(pages, current, logicalTarget) -> pagerState.scrollToPage(target)
+            else -> pagerState.animateScrollToPage(target)
+        }
     }
     LaunchedEffect(navigationRequestKey, pages.size, settings.readingMode) {
         val action = navigationAction
@@ -958,23 +1346,34 @@ private fun Modifier.novelTapZones(
 private fun Modifier.novelHorizontalDrag(
     readingMode: ReadingMode,
     onTapAction: (ReaderTapAction) -> Unit,
+    onDragging: (Boolean) -> Unit = {},
 ): Modifier = pointerInput(readingMode, onTapAction) {
     var dragDistance = 0f
     val threshold = 64.dp.toPx()
-    detectHorizontalDragGestures(
-        onHorizontalDrag = { change, amount ->
-            change.consume()
-            dragDistance += amount
-        },
-        onDragEnd = {
-            if (abs(dragDistance) >= threshold) {
-                val forward = if (readingMode == ReadingMode.PAGER_RTL) dragDistance > 0f else dragDistance < 0f
-                onTapAction(if (forward) ReaderTapAction.NEXT_PAGE else ReaderTapAction.PREVIOUS_PAGE)
-            }
-            dragDistance = 0f
-        },
-        onDragCancel = { dragDistance = 0f },
-    )
+    // Cancelled mid-drag (the gesture restarts on new keys), it calls neither end nor cancel.
+    try {
+        detectHorizontalDragGestures(
+            onDragStart = { onDragging(true) },
+            onHorizontalDrag = { change, amount ->
+                change.consume()
+                dragDistance += amount
+            },
+            onDragEnd = {
+                onDragging(false)
+                if (abs(dragDistance) >= threshold) {
+                    val forward = if (readingMode == ReadingMode.PAGER_RTL) dragDistance > 0f else dragDistance < 0f
+                    onTapAction(if (forward) ReaderTapAction.NEXT_PAGE else ReaderTapAction.PREVIOUS_PAGE)
+                }
+                dragDistance = 0f
+            },
+            onDragCancel = {
+                onDragging(false)
+                dragDistance = 0f
+            },
+        )
+    } finally {
+        onDragging(false)
+    }
 }
 
 private fun Modifier.novelWheelPaging(
@@ -1041,6 +1440,8 @@ private fun NovelPage(
                     .heightIn(min = 120.dp, max = 680.dp)
                     .padding(vertical = 12.dp),
             )
+            // Blank until its section is measured, which arriving here has just asked for.
+            is NovelVisualPage.Pending -> Unit
         }
     }
 }
@@ -1084,121 +1485,4 @@ private fun ProtectedNovelImage(
             onDismiss = { viewing = false },
         )
     }
-}
-
-private fun paginateNovelContent(
-    source: String,
-    textMeasurer: androidx.compose.ui.text.TextMeasurer,
-    textStyle: TextStyle,
-    maxWidthPixels: Int,
-    maxHeightPixels: Int,
-): List<NovelVisualPage> {
-    val result = ArrayList<NovelVisualPage>()
-    parseNovelReaderSegments(source).forEach { segment ->
-        when (segment) {
-            is NovelReaderSegment.Image -> result += NovelVisualPage.Image(
-                url = segment.url,
-                alt = segment.alt,
-                sourceStartUtf16 = segment.sourceStartUtf16,
-                sourceEndUtf16 = segment.sourceEndUtf16,
-            )
-            is NovelReaderSegment.Text -> {
-                val display = sanitizeNovelDisplayText(segment.value)
-                var cursor = 0
-                while (cursor < display.value.length) {
-                    val measuredEnd = measuredNovelPageEnd(
-                        text = display.value,
-                        start = cursor,
-                        textMeasurer = textMeasurer,
-                        textStyle = textStyle,
-                        maxWidthPixels = maxWidthPixels,
-                        maxHeightPixels = maxHeightPixels,
-                    )
-                    val end = preferredNovelPageBreak(display.value, cursor, measuredEnd)
-                    val visible = display.value.substring(cursor, end).trimEnd()
-                    if (visible.isNotEmpty()) {
-                        result += NovelVisualPage.Text(
-                            value = visible,
-                            sourceStartUtf16 = segment.sourceStartUtf16 + display.sourceOffsets[cursor],
-                            sourceEndUtf16 = segment.sourceStartUtf16 + display.sourceOffsets[end],
-                        )
-                    }
-                    cursor = end.coerceAtLeast(nextUtf16Boundary(display.value, cursor))
-                    while (cursor < display.value.length && (display.value[cursor] == ' ' || display.value[cursor] == '\t')) {
-                        cursor++
-                    }
-                }
-            }
-        }
-    }
-    return result.ifEmpty {
-        listOf(NovelVisualPage.Text("（本章沒有內容）", 0, source.length))
-    }
-}
-
-private fun measuredNovelPageEnd(
-    text: String,
-    start: Int,
-    textMeasurer: androidx.compose.ui.text.TextMeasurer,
-    textStyle: TextStyle,
-    maxWidthPixels: Int,
-    maxHeightPixels: Int,
-): Int {
-    fun fits(end: Int): Boolean {
-        val layout = textMeasurer.measure(
-            text = AnnotatedString(text.substring(start, end)),
-            style = textStyle,
-            overflow = TextOverflow.Clip,
-            softWrap = true,
-            constraints = Constraints(maxWidth = maxWidthPixels),
-        )
-        return layout.size.height <= maxHeightPixels && !layout.hasVisualOverflow
-    }
-
-    var best = start
-    var probe = (start + 384).coerceAtMost(text.length)
-    var firstOverflow = text.length
-    while (true) {
-        val boundary = previousUtf16Boundary(text, probe).coerceAtLeast(nextUtf16Boundary(text, start))
-        if (!fits(boundary)) {
-            firstOverflow = boundary
-            break
-        }
-        best = boundary
-        if (boundary >= text.length) return text.length
-        val grown = start + (boundary - start) * 2
-        probe = grown.coerceAtMost(text.length)
-    }
-
-    var low = (best + 1).coerceAtMost(firstOverflow)
-    var high = firstOverflow - 1
-    while (low <= high) {
-        val rawMiddle = (low + high) ushr 1
-        val middle = previousUtf16Boundary(text, rawMiddle).coerceAtLeast(nextUtf16Boundary(text, start))
-        if (fits(middle)) {
-            best = maxOf(best, middle)
-            low = rawMiddle + 1
-        } else {
-            high = rawMiddle - 1
-        }
-    }
-    return best.coerceAtLeast(nextUtf16Boundary(text, start))
-}
-
-private fun previousUtf16Boundary(text: String, requested: Int): Int {
-    val index = requested.coerceIn(0, text.length)
-    return if (
-        index in 1 until text.length &&
-        text[index - 1].isHighSurrogate() &&
-        text[index].isLowSurrogate()
-    ) index - 1 else index
-}
-
-private fun nextUtf16Boundary(text: String, start: Int): Int {
-    if (start >= text.length) return text.length
-    return if (
-        start + 1 < text.length &&
-        text[start].isHighSurrogate() &&
-        text[start + 1].isLowSurrogate()
-    ) start + 2 else start + 1
 }

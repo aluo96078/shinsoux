@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.portability
 
+import dev.shinsou.kmp.backup.BackupV2ArchiveSource
 import dev.shinsou.kmp.backup.BackupV2CreatePolicy
 import dev.shinsou.kmp.backup.BackupV2BinaryCodec
 import dev.shinsou.kmp.backup.BackupV2PortableState
@@ -310,6 +311,55 @@ class ContentPortabilityUiControllerTest {
         assertEquals(PortableContentBackupV2UiPhase.IDLE, controller.state.value.phase)
         assertEquals("backup_v2_invalid_archive", controller.state.value.failure?.code)
         assertEquals(0, restoreCalls)
+    }
+
+    @Test
+    fun theControllerClosesEachArchiveOnceNothingWillReadItAgain() = runTest {
+        val created = emptyBackup()
+        var failNextRestore = true
+        val controller = DefaultPortableContentBackupV2UiController(
+            createAction = PortableContentBackupV2CreateAction { created },
+            restoreAction = PortableContentBackupV2RestoreAction { _, _ ->
+                if (failNextRestore) {
+                    failNextRestore = false
+                    error("commit failed")
+                }
+                PortableContentBackupV2RestoreResult(0, 0, 0)
+            },
+            workDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val encoded = assertNotNull(controller.createExport(includeContentBlobs = false)).copyEncoded()
+
+        val rejected = ClosingSource("not-an-archive".encodeToByteArray())
+        controller.inspectForRestore(rejected)
+        assertEquals(1, rejected.closes, "a rejected archive is closed at once")
+
+        val replaced = ClosingSource(encoded)
+        controller.inspectForRestore(replaced)
+        assertEquals(0, replaced.closes, "an archive under review stays open")
+        val discarded = ClosingSource(encoded)
+        controller.inspectForRestore(discarded)
+        assertEquals(1, replaced.closes, "choosing another archive closes the one it replaces")
+        controller.discardRestoreReview()
+        assertEquals(1, discarded.closes, "discarding the review closes its archive")
+
+        val restored = ClosingSource(encoded)
+        controller.inspectForRestore(restored)
+        controller.restore()
+        assertEquals(0, restored.closes, "a failed restore keeps its archive for a retry")
+        controller.restore()
+        assertEquals(PortableContentBackupV2UiPhase.COMPLETE, controller.state.value.phase)
+        assertEquals(1, restored.closes, "a restored archive is closed")
+    }
+
+    private class ClosingSource(private val bytes: ByteArray) : BackupV2ArchiveSource {
+        var closes = 0
+        override val byteSize: Long get() = bytes.size.toLong()
+        override fun read(offset: Long, byteCount: Int): ByteArray =
+            bytes.copyOfRange(offset.toInt(), offset.toInt() + byteCount)
+        override fun close() {
+            closes += 1
+        }
     }
 
     /**

@@ -49,6 +49,7 @@ import dev.shinsou.kmp.navigation.Destination
 import dev.shinsou.kmp.navigation.NavigationState
 import dev.shinsou.kmp.navigation.PageEntry
 import dev.shinsou.kmp.navigation.WideArrangement
+import dev.shinsou.kmp.navigation.phoneReaderBeneath
 import dev.shinsou.kmp.navigation.wideArrangement
 import dev.shinsou.kmp.ui.i18n.LocalShinsouStrings
 import dev.shinsou.kmp.ui.browse.BrowseBackNavigation
@@ -111,13 +112,17 @@ internal fun PhoneShell(
                     0f
                 },
             )
+            // An open extension reader stays mounted beneath a page that covers it (a recovery a
+            // deep link starts), as in a wide window: Back reveals the same chapter, and the
+            // shell's reader state stays true to what is mounted.
+            val readerBeneath = phoneReaderBeneath(nav)
             AnimatedContent(
-                targetState = destination,
+                targetState = readerBeneath?.destination ?: destination,
                 modifier = Modifier.fillMaxSize(),
                 transitionSpec = { phoneTransition(backSwipe.value) },
                 label = "phone-navigation",
             ) { shown ->
-                val edgeOffset = edgeOffset(shown, nav, backSwipe.value)
+                val edgeOffset = if (readerBeneath != null) 0f else edgeOffset(shown, nav, backSwipe.value)
                 Box(Modifier.fillMaxSize().graphicsLayer { translationX = size.width * edgeOffset }) {
                     if (shown == Destination.Section) {
                         Spacer(Modifier.fillMaxSize())
@@ -126,6 +131,12 @@ internal fun PhoneShell(
                         // page has actually been dragged away.
                         OpaquePage { PhonePushedPage(app, shown, nav, snapshot, backSwipe) }
                     }
+                }
+            }
+            if (readerBeneath != null) {
+                val edgeOffset = edgeOffset(destination, nav, backSwipe.value)
+                Box(Modifier.fillMaxSize().graphicsLayer { translationX = size.width * edgeOffset }) {
+                    OpaquePage { PhonePushedPage(app, destination, nav, snapshot, backSwipe) }
                 }
             }
         }
@@ -372,7 +383,8 @@ private fun AppSectionPane(
             navigation = BrowseBackNavigation(nav.backRequests[BackTarget.BROWSE], browseBackGestureProgress),
             onBackAvailabilityChanged = app.navigator::setBrowseBackAvailable,
             onParentDismissed = app.navigator::closeBrowseParentDetail,
-            onReaderVisibilityChanged = app.navigator::setBrowseReaderOpen,
+            onReaderVisibilityChanged = app.navigator::setBrowseSectionReaderOpen,
+            onReaderOpening = app.navigator::browseSectionReaderOpening,
             onReaderProgress = app::recordV2ReaderProgress,
             onReaderProgressFlushed = app.v2Progress::flushLocal,
             volumeKeyRouter = app.volumeKeyRouter,

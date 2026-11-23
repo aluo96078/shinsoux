@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
 package dev.shinsou.kmp.data
 
 import dev.shinsou.kmp.domain.model.AppSettings
@@ -71,6 +73,15 @@ public class ShinsouRepository(
     private var persistenceClosed = false
     private var mutationObserver: SnapshotMutationObserver? = null
     private var replacementGuard: SnapshotReplacementGuard? = null
+
+    private val replacements = kotlin.concurrent.atomics.AtomicLong(0L)
+
+    /**
+     * How many times the whole snapshot was replaced (a backup restore, a sync catch-up). A
+     * replacement can give a row's id and URL to another title, so a caller that remembers a row
+     * it wrote checks this before it undoes that row.
+     */
+    public val snapshotReplacementCount: Long get() = replacements.load()
     private val persistence = storage?.let {
         SnapshotPersistenceWorker(
             initial = mutableSnapshot.value,
@@ -162,6 +173,7 @@ public class ShinsouRepository(
             .copy(revision = nextRevision(current.revision, imported.revision))
             .validate()
         if (notifyMutationObserver) mutationObserver?.beforeCommit(current, next)
+        replacements.addAndFetch(1L)
         mutableSnapshot.value = next
         persistence?.enqueue(next)
         next
@@ -220,6 +232,7 @@ public class ShinsouRepository(
             .copy(revision = nextRevision(current.revision, imported.revision))
             .validate()
         if (notifyMutationObserver) mutationObserver?.beforeCommit(current, next)
+        replacements.addAndFetch(1L)
         mutableSnapshot.value = next
         persistence?.enqueue(next)
         next
@@ -258,7 +271,9 @@ public class ShinsouRepository(
         }
     }
 
-    public suspend fun upsertManga(manga: Manga): Manga = mutate { state ->
+    public suspend fun upsertManga(manga: Manga): Manga = mutate { state -> upsertMangaIn(state, manga) }
+
+    private fun upsertMangaIn(state: AppSnapshot, manga: Manga): Mutation<Manga> {
         val existingIndex = when {
             manga.id > 0 -> state.mangas.indexOfFirst { it.id == manga.id }
             manga.url.isNotBlank() -> state.mangas.indexOfFirst { it.source == manga.source && it.url == manga.url }
@@ -280,8 +295,159 @@ public class ShinsouRepository(
         } else if (links.none { it.mangaId == resolved.id }) {
             links = links + MangaCategory(resolved.id, state.defaultFavoriteCategoryId())
         }
-        Mutation(state.copy(mangas = mangas, mangaCategories = links), resolved)
+        return Mutation(state.copy(mangas = mangas, mangaCategories = links), resolved)
     }
+
+    /**
+     * Writes a title and one chapter of it in one commit, for rows that point to content stored
+     * elsewhere (a local import). [commitContent] makes that content durable and runs under this
+     * repository's lock, just before the rows are published. A backup restore replaces the content
+     * and the snapshot under the same lock, so it cannot fall between a title's content and its
+     * rows. When [commitContent] answers false nothing is written and the result is null. A chapter
+     * written over one of the same URL keeps its read and bookmark flags and its last page read.
+     * [commitContent] must not call this repository.
+     */
+    public suspend fun upsertMangaWithChapterAfter(
+        manga: Manga,
+        chapter: (mangaId: Long) -> Chapter,
+        commitContent: () -> Boolean,
+    ): MangaWithChapterWrite? = mutateIf { state ->
+        val before = state.mangas.firstOrNull { it.source == manga.source && it.url == manga.url }
+        // The rows are resolved first: a row that cannot be written must not leave content behind.
+        val written = upsertMangaIn(state, manga)
+        val fresh = chapter(written.result.id)
+        // Imported again, a chapter keeps where its reader was: a rollback of the import keeps it too.
+        val kept = written.snapshot.chapters.firstOrNull { it.mangaId == fresh.mangaId && it.url == fresh.url }
+            ?.let { existing -> fresh.copy(read = existing.read, bookmark = existing.bookmark, lastPageRead = existing.lastPageRead) }
+            ?: fresh
+        val chapterWritten = upsertChapterIn(written.snapshot, kept)
+        if (!commitContent()) return@mutateIf null
+        Mutation(
+            chapterWritten.snapshot,
+            MangaWithChapterWrite(before, written.result, chapterWritten.result, replacements.load()),
+        )
+    }
+
+    /**
+     * Deletes [expected] (with its chapters, history and links, as [deleteManga]) only while the
+     * row is still exactly [expected] and the snapshot was not replaced since [replacementCount].
+     * Checked and deleted under one lock, so a replacement cannot give the id to another title in
+     * between. False when nothing was deleted.
+     */
+    public suspend fun deleteMangaIf(expected: Manga, replacementCount: Long): Boolean = mutateIf { state ->
+        state.takeIf { owns(it, expected, replacementCount) }
+            ?.let { Mutation(it.withoutManga(expected.id), true) }
+    } ?: false
+
+    /**
+     * Puts [with] in the place of [expected], under the same check as [deleteMangaIf]. A favorite
+     * title also gets [categoryIds] back (those that still exist): taking a title out of the
+     * library drops its category links, and the row alone would return it to the default category.
+     * With [expectedCategoryIds], the links are put back only while they are still those: moving a
+     * title to another shelf changes its links and not its row, and that edit is kept.
+     */
+    public suspend fun replaceMangaIf(
+        expected: Manga,
+        replacementCount: Long,
+        with: Manga,
+        categoryIds: List<Long> = emptyList(),
+        expectedCategoryIds: Collection<Long>? = null,
+    ): Boolean = mutateIf { state ->
+        if (!owns(state, expected, replacementCount)) return@mutateIf null
+        val replaced = replaceMangaAt(state, state.mangas.indexOfFirst { it.id == expected.id }, with)
+        val known = state.categories.mapTo(mutableSetOf()) { it.id }
+        val restored = categoryIds.filter { it in known }.distinct()
+        val linksKept = expectedCategoryIds != null && state.categoryIdsOf(expected.id) != expectedCategoryIds.toSet()
+        val snapshot = if (!with.favorite || restored.isEmpty() || linksKept) {
+            replaced.snapshot
+        } else {
+            replaced.snapshot.copy(
+                mangaCategories = replaced.snapshot.mangaCategories.filterNot { it.mangaId == expected.id } +
+                    restored.map { MangaCategory(expected.id, it) },
+            )
+        }
+        Mutation(snapshot, true)
+    } ?: false
+
+    /**
+     * Takes [expected] out of the library as [toggleMangaFavorite] does, under the same check as
+     * [deleteMangaIf]. With [replacedBy], the title that takes its place, it also leaves the library
+     * only while that title is still in it: one snapshot replacement (a backup restore) can bring
+     * [expected] back without its replacement, and it must then keep its place and its category
+     * links. [replacementCount] is then the count when [replacedBy] was written. [replacedBy] takes
+     * over the category links [expected] loses, in the same commit: it takes its place in the
+     * library, so it is shelved where [expected] was. The row as it was left, or null when nothing
+     * changed. [replacedByWasInLibrary]: [replacedBy] was in the library before it replaced
+     * [expected], so all its links are the user's and it keeps them, the one to the default
+     * category too; a title just added has that one only because it had no other.
+     */
+    public suspend fun unfavoriteMangaIf(
+        expected: Manga,
+        replacementCount: Long,
+        modifiedAt: Long,
+        replacedBy: Manga? = null,
+        replacedByWasInLibrary: Boolean = false,
+    ): Manga? = mutateIf { state ->
+        val replaced = replacedBy == null || state.mangas.any { it.isInLibraryAs(replacedBy) }
+        if (!expected.favorite || !replaced || !owns(state, expected, replacementCount)) return@mutateIf null
+        val carried = replacedBy?.let {
+            state.withCategoryLinksCarried(from = expected.id, to = it.id, keepOwn = replacedByWasInLibrary)
+        } ?: state
+        replaceMangaAt(
+            carried,
+            carried.mangas.indexOfFirst { it.id == expected.id },
+            expected.copy(favorite = false).withFavoriteMutationMetadata(expected, modifiedAt),
+        )
+    }
+
+    /**
+     * Gives the title [to] the category links of [from] as well as its own; a link to the default
+     * category that [to] got only by being added just now gives way to them (unless [keepOwn]:
+     * it was the user's choice), and Default stays exclusive of named categories
+     * ([normalizeMangaCategorySelection]).
+     */
+    private fun AppSnapshot.withCategoryLinksCarried(from: Long, to: Long, keepOwn: Boolean): AppSnapshot {
+        val carried = mangaCategories.filter { it.mangaId == from }.map { it.categoryId }
+        if (carried.isEmpty() || from == to) return this
+        val own = mangaCategories.filter { it.mangaId == to }.map { it.categoryId }
+            .takeUnless { !keepOwn && it == listOf(defaultFavoriteCategoryId()) }.orEmpty()
+        // Default is never one shelf among others: a named one replaces it.
+        val links = normalizeMangaCategorySelection(own + carried).map { MangaCategory(to, it) }
+        return copy(mangaCategories = mangaCategories.filterNot { it.mangaId == to } + links)
+    }
+
+    /**
+     * Gives the favorite title [mangaId] the category links [with] (those that still exist) while
+     * its links are still [expected] and the snapshot was not replaced since [replacementCount]:
+     * an import undoing the links it changed keeps a shelf edit made since. False when nothing changed.
+     */
+    public suspend fun replaceCategoryLinksIf(
+        mangaId: Long,
+        replacementCount: Long,
+        expected: Collection<Long>,
+        with: Collection<Long>,
+    ): Boolean = mutateIf { state ->
+        val favorite = state.mangas.any { it.id == mangaId && it.favorite }
+        val unchanged = replacements.load() == replacementCount && state.categoryIdsOf(mangaId) == expected.toSet()
+        if (!favorite || !unchanged) return@mutateIf null
+        val known = state.categories.mapTo(mutableSetOf()) { it.id }
+        val links = normalizeMangaCategorySelection(with.filter { it in known }).map { MangaCategory(mangaId, it) }
+        Mutation(state.copy(mangaCategories = state.mangaCategories.filterNot { it.mangaId == mangaId } + links), true)
+    } ?: false
+
+    private fun AppSnapshot.categoryIdsOf(mangaId: Long): Set<Long> =
+        mangaCategories.filter { it.mangaId == mangaId }.mapTo(mutableSetOf()) { it.categoryId }
+
+    /** The same title as [other] (its id, source and URL), in the library; its other fields may differ. */
+    private fun Manga.isInLibraryAs(other: Manga): Boolean =
+        favorite && id == other.id && source == other.source && url == other.url
+
+    private fun owns(state: AppSnapshot, expected: Manga, replacementCount: Long): Boolean =
+        replacements.load() == replacementCount && state.mangas.any { it == expected }
+
+    /** The category links of a title, as stored: empty for one that only has the default. */
+    public fun categoryIdsOfManga(mangaId: Long): List<Long> =
+        snapshot.value.mangaCategories.filter { it.mangaId == mangaId }.map { it.categoryId }
 
     public suspend fun patchManga(
         mangaId: Long,
@@ -327,23 +493,26 @@ public class ShinsouRepository(
     public suspend fun deleteManga(mangaId: Long) {
         mutate { state ->
             if (state.mangas.none { it.id == mangaId }) missing("Manga", mangaId)
-            val chapterIds = state.chapters.filter { it.mangaId == mangaId }.mapTo(mutableSetOf()) { it.id }
-            Mutation(
-                state.copy(
-                    mangas = state.mangas.filterNot { it.id == mangaId },
-                    chapters = state.chapters.filterNot { it.mangaId == mangaId },
-                    mangaCategories = state.mangaCategories.filterNot { it.mangaId == mangaId },
-                    histories = state.histories.filterNot { it.chapterId in chapterIds },
-                    updates = state.updates.filterNot { it.mangaId == mangaId || it.chapterId in chapterIds },
-                    downloadQueue = state.downloadQueue.filterNot { it.mangaId == mangaId || it.chapterId in chapterIds },
-                    tracks = state.tracks.filterNot { it.mangaId == mangaId },
-                ),
-                Unit,
-            )
+            Mutation(state.withoutManga(mangaId), Unit)
         }
     }
 
-    public suspend fun upsertChapter(chapter: Chapter): Chapter = mutate { state ->
+    private fun AppSnapshot.withoutManga(mangaId: Long): AppSnapshot {
+        val chapterIds = chapters.filter { it.mangaId == mangaId }.mapTo(mutableSetOf()) { it.id }
+        return copy(
+            mangas = mangas.filterNot { it.id == mangaId },
+            chapters = chapters.filterNot { it.mangaId == mangaId },
+            mangaCategories = mangaCategories.filterNot { it.mangaId == mangaId },
+            histories = histories.filterNot { it.chapterId in chapterIds },
+            updates = updates.filterNot { it.mangaId == mangaId || it.chapterId in chapterIds },
+            downloadQueue = downloadQueue.filterNot { it.mangaId == mangaId || it.chapterId in chapterIds },
+            tracks = tracks.filterNot { it.mangaId == mangaId },
+        )
+    }
+
+    public suspend fun upsertChapter(chapter: Chapter): Chapter = mutate { state -> upsertChapterIn(state, chapter) }
+
+    private fun upsertChapterIn(state: AppSnapshot, chapter: Chapter): Mutation<Chapter> {
         requireManga(state, chapter.mangaId)
         validateChapter(chapter)
         val existingIndex = when {
@@ -362,7 +531,7 @@ public class ShinsouRepository(
             if (existingIndex >= 0) this[existingIndex] = resolved else add(resolved)
         }
         val histories = state.histories.fittingPages(mapOf(resolved.id to resolved.lastPageRead))
-        Mutation(state.copy(chapters = chapters, histories = histories), resolved)
+        return Mutation(state.copy(chapters = chapters, histories = histories), resolved)
     }
 
     public suspend fun upsertChapters(chapters: List<Chapter>): List<Chapter> = mutate { state ->
@@ -993,6 +1162,7 @@ public class ShinsouRepository(
             throw failure
         }
         check(journalCommitted) { "The host transaction did not commit the sync journal boundary" }
+        replacements.addAndFetch(1L)
         mutableSnapshot.value = next
         persistence?.enqueue(next)
         AtomicSnapshotMutationResult(snapshot = next, result = result)
@@ -1074,13 +1244,24 @@ public class ShinsouRepository(
     private suspend fun <T> mutate(block: (AppSnapshot) -> Mutation<T>): T = mutex.withLock {
         ensurePersistenceOpen()
         val current = mutableSnapshot.value
-        val mutation = block(current)
+        commit(current, block(current))
+    }
+
+    /** [mutate] for a conditional write: a null [block] result commits nothing and answers null. */
+    private suspend fun <T : Any> mutateIf(block: (AppSnapshot) -> Mutation<T>?): T? = mutex.withLock {
+        ensurePersistenceOpen()
+        val current = mutableSnapshot.value
+        block(current)?.let { commit(current, it) }
+    }
+
+    /** Publishes [mutation] over [current]; the caller holds [mutex]. */
+    private suspend fun <T> commit(current: AppSnapshot, mutation: Mutation<T>): T {
         val next = mutation.snapshot.withRequiredDefaults()
             .copy(revision = nextRevision(current.revision, mutation.snapshot.revision))
         mutationObserver?.beforeCommit(current, next)
         mutableSnapshot.value = next
         persistence?.enqueue(next)
-        mutation.result
+        return mutation.result
     }
 
     private data class Mutation<T>(val snapshot: AppSnapshot, val result: T)
@@ -1089,6 +1270,15 @@ public class ShinsouRepository(
         check(!persistenceClosed) { "Repository persistence is closed" }
     }
 }
+
+/** What [ShinsouRepository.upsertMangaWithChapterAfter] wrote; [before] is the title's row before it. */
+public data class MangaWithChapterWrite(
+    val before: Manga?,
+    val manga: Manga,
+    val chapter: Chapter,
+    /** [ShinsouRepository.snapshotReplacementCount] when the rows were written. */
+    val replacementCount: Long,
+)
 
 public data class AtomicSnapshotMutationResult<T>(
     val snapshot: AppSnapshot,

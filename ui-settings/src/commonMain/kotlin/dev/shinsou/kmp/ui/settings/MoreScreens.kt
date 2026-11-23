@@ -124,10 +124,16 @@ public fun MoreScreen(
     incognitoMode: Boolean,
     downloadOnlyMode: Boolean,
     onOpen: (MoreDestination) -> Unit,
-    onImportLocal: (syncContentBodies: Boolean) -> Unit,
+    /**
+     * Picks and imports local files. [chooseTextEncoding]: the user asked to choose the encoding of
+     * every TXT that has more than one reading, which is how a TXT imported garbled is corrected.
+     */
+    onImportLocal: (syncContentBodies: Boolean, chooseTextEncoding: Boolean) -> Unit,
     onIncognitoModeChange: (Boolean) -> Unit,
     onDownloadOnlyModeChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    /** A local import is still running: the card shows it and does not start another. */
+    localImportInProgress: Boolean = false,
 ) {
     val strings = LocalShinsouStrings.current
     val rows = listOf(
@@ -174,7 +180,10 @@ public fun MoreScreen(
                 )
             }
             item("local-content-import") {
-                LocalImportCard(onClick = { onImportLocal(false) })
+                LocalImportCard(inProgress = localImportInProgress, onClick = { onImportLocal(false, false) })
+            }
+            item("local-content-import-encoding") {
+                LocalImportEncodingRow(enabled = !localImportInProgress, onClick = { onImportLocal(false, true) })
             }
             items(rows, key = { it.destination.name }) { row ->
                 MoreRowCard(row, onClick = { onOpen(row.destination) })
@@ -185,10 +194,11 @@ public fun MoreScreen(
 
 /** The prominent card that imports local content. */
 @Composable
-private fun LocalImportCard(onClick: () -> Unit) {
+private fun LocalImportCard(inProgress: Boolean, onClick: () -> Unit) {
     val strings = LocalShinsouStrings.current
     Surface(
         onClick = onClick,
+        enabled = !inProgress,
         shape = RoundedCornerShape(13.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
         modifier = Modifier.fillMaxWidth(),
@@ -210,14 +220,61 @@ private fun LocalImportCard(onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(strings.text(StringKey.IMPORT_LOCAL_CONTENT), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    strings.text(StringKey.IMAGES_CBZ_ZIP_TXT_OR_EPUB_STORED),
+                    strings.text(
+                        if (inProgress) StringKey.IMPORTING_LOCAL_CONTENT else StringKey.IMAGES_CBZ_ZIP_TXT_OR_EPUB_STORED,
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(Icons.Outlined.OpenInNew, null, Modifier.size(17.dp))
+            if (inProgress) {
+                CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Outlined.OpenInNew, null, Modifier.size(17.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Imports local content asking for the encoding of every TXT with more than one reading. The
+ * import cannot tell every legacy Chinese TXT from UTF-8, so this is how a garbled one is corrected.
+ */
+@Composable
+private fun LocalImportEncodingRow(enabled: Boolean, onClick: () -> Unit) {
+    val strings = LocalShinsouStrings.current
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+        ) {
+            Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Translate, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    strings.text(StringKey.IMPORT_CHOOSING_THE_TEXT_ENCODING),
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    strings.text(StringKey.FOR_TXT_FILES_WHOSE_TEXT_LOOKS_GARBLED),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

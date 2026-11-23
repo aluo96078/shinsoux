@@ -110,9 +110,12 @@ internal class HostReaderChapterSource(
         val navigation = typed.content.navigation
         val localVisualPageIndex = repository.chapter(session.chapterId)?.lastPageRead?.coerceAtLeast(0)
         val localHistory = repository.currentSnapshot.histories.firstOrNull { it.chapterId == session.chapterId }
-        val localLocator = localHistory?.lastLocator?.takeIf { navigation.indexOf(it) != null }
+        val localLocator = localHistory?.lastLocator?.let(navigation::resolve)
         return TypedReaderContentSession(
-            content = typed.content.copy(initialLocator = localLocator ?: typed.content.initialLocator),
+            content = typed.content.copy(
+                initialLocator = localLocator ?: typed.content.initialLocator,
+                initialLocatorSaved = localLocator != null,
+            ),
             canonicalText = typed.canonicalText,
             access = typed.access,
             initialVisualPageIndex = localVisualPageIndex,

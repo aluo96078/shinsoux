@@ -21,6 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import dev.shinsou.kmp.domain.model.ReadingLocator
 import dev.shinsou.kmp.domain.model.ReadingScope
 import dev.shinsou.kmp.domain.model.TextQuote
 
@@ -75,6 +76,36 @@ class UnifiedReaderNavigationTest {
         assertFailsWith<IllegalArgumentException> {
             UnifiedReaderNavigationFactory.create(scope(), textRepresentation())
         }
+    }
+
+    @Test
+    fun aTextLocatorWhoseBlockIsGoneIsReanchoredByItsOffsetOrQuote() {
+        val navigation = PlainTextNavigation(scope(), textRepresentation(), "a😀\n\nb")
+        val kept = navigation.locatorAt(1)
+        assertEquals(kept, navigation.resolve(kept))
+
+        val byOffset = assertIs<ReadingLocator.Text>(navigation.resolve(kept.copy(blockId = "gone")))
+        assertEquals("second", byOffset.blockId)
+        assertEquals(5, byOffset.offset)
+        assertEquals(1, navigation.indexOf(byOffset))
+
+        val movedQuote = kept.copy(blockId = "gone", offset = 0, quote = TextQuote(exact = "b"))
+        val byQuote = assertIs<ReadingLocator.Text>(navigation.resolve(movedQuote))
+        assertEquals("second", byQuote.blockId)
+        assertEquals(5, byQuote.offset)
+        assertEquals(TextQuote(exact = "b"), byQuote.quote)
+
+        assertNull(navigation.resolve(kept.copy(blockId = "gone", offset = 0, quote = TextQuote(exact = "zz"))))
+        assertNull(navigation.resolve(kept.copy(blockId = "gone", scope = scope(contentRevision = 8))))
+        assertNull(navigation.resolve(kept.copy(blockId = "gone", resourceId = "other-body")))
+    }
+
+    @Test
+    fun otherNavigationsKeepOnlyLocatorsTheyFind() {
+        val image = ImageSequenceNavigation(scope(), imageRepresentation())
+        val first = image.locatorAt(0)
+        assertEquals(first, image.resolve(first))
+        assertNull(image.resolve(first.copy(pageResourceId = "gone")))
     }
 
     @Test

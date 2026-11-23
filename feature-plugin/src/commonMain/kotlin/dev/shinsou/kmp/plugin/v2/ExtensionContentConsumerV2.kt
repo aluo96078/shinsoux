@@ -14,6 +14,7 @@ import dev.shinsou.kmp.content.acquisition.LocalImagePageSource
 import dev.shinsou.kmp.content.acquisition.SUPPORTED_LOCAL_IMAGE_MEDIA_TYPES
 import dev.shinsou.kmp.content.acquisition.TextAcquisitionRequest
 import dev.shinsou.kmp.content.acquisition.TextAcquisitionService
+import dev.shinsou.kmp.content.acquisition.TextEncodingHint
 import dev.shinsou.kmp.content.blob.BlobPublishReceipt
 import dev.shinsou.kmp.content.transaction.ContentCommitBatch
 import dev.shinsou.kmp.content.transaction.LegacyOutboxDraft
@@ -757,7 +758,8 @@ internal class ExtensionContentConsumerV2(
                 authorizeOfflineStore = { byteCount ->
                     require(byteCount == request.byteCount) { "Canonical extension text changed byte size" }
                 },
-            ).acquire(TextAcquisitionRequest(target, text.encodeToByteArray()))
+                // The bytes are this string's UTF-8: never guessed to be a legacy encoding.
+            ).acquire(TextAcquisitionRequest(target, text.encodeToByteArray(), TextEncodingHint.UTF_8))
         }
         return acquired.toPreparedRepresentation()
     }

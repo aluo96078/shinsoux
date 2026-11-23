@@ -5,6 +5,8 @@ import dev.shinsou.kmp.content.acquisition.LocalImagePageSource
 import dev.shinsou.kmp.concurrent.runCatchingCancellable
 import dev.shinsou.kmp.content.ContentFoundationRuntime
 import dev.shinsou.kmp.contract.LocalImportResult
+import dev.shinsou.kmp.contract.LocalTextEncoding
+import dev.shinsou.kmp.contract.LocalTextEncodingQuestion
 import dev.shinsou.kmp.data.ShinsouRepository
 import dev.shinsou.kmp.domain.model.Chapter
 import dev.shinsou.kmp.domain.model.LOCAL_SOURCE_ID
@@ -47,6 +49,21 @@ public class LocalContentImportException(message: String, cause: Throwable? = nu
     override val loggableSummary: String get() = "LocalContentImportException"
 }
 
+/**
+ * Appends why an import failed, so the user can act on it (for example an unsupported text
+ * encoding or a file over a limit) instead of seeing only that it failed.
+ */
+private fun withFailureReason(summary: String, error: Throwable): String {
+    val reason = generateSequence(error) { it.cause }
+        .firstNotNullOfOrNull { it.message?.trim()?.takeIf(String::isNotEmpty) }
+    return if (reason == null) "$summary." else "$summary: ${reason.take(MAX_FAILURE_REASON_CHARS)}"
+}
+
+private const val MAX_FAILURE_REASON_CHARS: Int = 200
+
+/** A restore while one title is prepared is rare; one after each of several attempts is not expected. */
+private const val MAX_PREPARE_ATTEMPTS: Int = 3
+
 /** Local content cannot be read. The message can name the title: shown, never logged. */
 public class LocalContentUnavailableException(message: String) : Exception(message), QuotesExternalText {
     override val loggableSummary: String get() = "LocalContentUnavailableException"
@@ -71,6 +88,7 @@ public class LocalContentManager(
     private val remoteAssetScopeFor: suspend (dev.shinsou.kmp.domain.model.SourceKey) -> dev.shinsou.kmp.contract.ReaderRemoteImageFetcher? = { null },
 ) : ContentCallbacks {
     private val importMutex = Mutex()
+    private val rollback = LocalLibraryRollback(repository, fileSystem, now)
     private val typedContent = contentFoundation?.let { foundation ->
         LocalTypedContentController(foundation, epubArchiveExtractor, now)
     }
@@ -78,6 +96,22 @@ public class LocalContentManager(
     override suspend fun importLocalDocuments(
         documents: List<ImportedDocument>,
         syncContentBodies: Boolean,
+        writeLibrary: suspend (suspend () -> Unit) -> Unit,
+        chooseTextEncoding: suspend (LocalTextEncodingQuestion) -> LocalTextEncoding?,
+        alwaysChooseTextEncoding: Boolean,
+    ): List<LocalImportResult> =
+        try {
+            val encoding = TextEncodingPrompt(chooseTextEncoding, alwaysChooseTextEncoding)
+            importLocalDocumentsOnce(documents, syncContentBodies, writeLibrary, encoding)
+        } finally {
+            documents.forEach(ImportedDocument::close)
+        }
+
+    private suspend fun importLocalDocumentsOnce(
+        documents: List<ImportedDocument>,
+        syncContentBodies: Boolean,
+        writeLibrary: suspend (suspend () -> Unit) -> Unit,
+        encoding: TextEncodingPrompt,
     ): List<LocalImportResult> =
         importMutex.withLock {
             val selected = documents.filterNot { it.name.isBlank() }
@@ -88,38 +122,108 @@ public class LocalContentManager(
                 throw LocalContentImportException("No supported local content was selected.")
             }
 
-            val imported = mutableListOf<LocalImportResult>()
+            // Each change is recorded inside its library write: the hop back from the store queue
+            // can be cancelled after the rows are committed, and rollback must still see them.
+            val library = LibraryWrites(writeLibrary, mutableListOf())
+            val changes = library.changes
+            // The readings this import replaces, each with the title that replaces it. In import
+            // order: a later file can choose again the reading an earlier one replaced.
+            val superseded = linkedMapOf<String, LibraryChange>()
             try {
                 typedDocuments
                     .sortedWith { left, right -> naturalPathComparator.compare(left.name, right.name) }
                     .forEach { document ->
-                        imported += persistTyped(importTypedDocument(document, syncContentBodies))
-                        // Publication/blob/outbox state is already durable. Notify only after the
-                        // compatibility Manga/Chapter projection is also visible, and keep the
-                        // callback non-blocking so derived indexing never enters the import path.
-                        onTypedContentCommitted()
+                        // A file the user chose not to import (its encoding question) is skipped.
+                        val change = importTypedDocument(document, syncContentBodies, encoding, library)
+                            ?: return@forEach
+                        change.chapterUrl?.let(superseded::remove)
+                        change.supersededChapterUrls.forEach { superseded[it] = change }
                     }
                 works.forEach { work ->
                     val typed = typedContent
                     if (typed == null) {
-                        imported += persist(work)
+                        writeLibrary { changes += persistedChange(persist(work)) }
                     } else {
-                        imported += persistTyped(importImageWork(typed, work, syncContentBodies))
-                        onTypedContentCommitted()
+                        importIntoLibrary(library) { prepareImageWork(typed, work, syncContentBodies) }
                     }
+                }
+                // A TXT read in another encoding than before replaces its earlier title. The
+                // replaced row leaves the library but stays, like any title removed from it:
+                // deleting it would let the startup repair project its publication back in. It is
+                // part of the import, so a failure (or cancellation) here rolls back the rest too.
+                if (superseded.isNotEmpty()) {
+                    writeLibrary { superseded.forEach { (url, replacement) -> changes += rollback.removeFromLibrary(url, replacement) } }
                 }
             } catch (error: Throwable) {
                 withContext(NonCancellable) {
-                    imported.forEach { result ->
-                        fileSystem.deleteTree(localDirectory(result.mangaId, result.chapterId))
-                        // Rollback is best effort; the original import error is rethrown below.
-                        runCatchingCancellable { repository.deleteManga(result.mangaId) }
-                    }
+                    // Rollback is best effort; the original import error is rethrown below.
+                    runCatchingCancellable { writeLibrary { changes.asReversed().forEach { rollback.undo(it) } } }
                 }
                 throw error
             }
-            imported
+            // A title whose row a later restore or sync replaced is not reported: its id can
+            // belong to another title by now.
+            changes.filter { change -> change.chapterUrl !in superseded.keys && repository.manga(change.after.id)?.url == change.after.url }
+                .mapNotNull(LibraryChange::result)
+                .distinctBy(LocalImportResult::mangaId)
         }
+
+    /** How an import asks for a TXT's encoding, and whether it asks for every TXT with several readings. */
+    private class TextEncodingPrompt(
+        val choose: suspend (LocalTextEncodingQuestion) -> LocalTextEncoding?,
+        val always: Boolean,
+    )
+
+    /** Where an import writes its library rows, and the rows it wrote so far. */
+    private class LibraryWrites(
+        val run: suspend (suspend () -> Unit) -> Unit,
+        val changes: MutableList<LibraryChange>,
+    )
+
+    /**
+     * Imports one typed title: [prepare] reads, parses and stages it off the store queue, then its
+     * short content commit and its library rows are written as one unit under the repository lock
+     * ([persistTyped]). A backup restore replaces the publication graph and the snapshot under that
+     * lock, so it cannot remove a body between the commit and the rows. When a restore changed the
+     * content store after [prepare] looked at it, the title is prepared again.
+     */
+    private suspend fun importIntoLibrary(
+        library: LibraryWrites,
+        prepare: suspend () -> PreparedTypedImport,
+    ): LibraryChange {
+        repeat(MAX_PREPARE_ATTEMPTS) {
+            val prepared = prepare()
+            var written: LibraryChange? = null
+            try {
+                library.run {
+                    persistTyped(prepared)?.let { change ->
+                        library.changes += change
+                        written = change
+                    }
+                }
+            } finally {
+                prepared.abandon()
+            }
+            written?.let { change ->
+                // Publication/blob/outbox state is already durable. Notify only after the
+                // compatibility Manga/Chapter projection is also visible, and keep the
+                // callback non-blocking so derived indexing never enters the import path.
+                onTypedContentCommitted()
+                return change
+            }
+        }
+        throw LocalContentImportException("The library was restored during the import. Import the files again.")
+    }
+
+    private fun persistedChange(result: LocalImportResult): LibraryChange = LibraryChange(
+        before = null,
+        after = checkNotNull(repository.manga(result.mangaId)),
+        replacementCount = repository.snapshotReplacementCount,
+        result = result,
+    )
+
+    private fun typedLibraryManga(chapterUrl: String): Manga? =
+        repository.manga(LOCAL_SOURCE_ID, chapterUrl.substringBeforeLast('/'))
 
     /** Rejects unsupported file types and returns the TXT/EPUB documents of [selected]. */
     private fun validateImportSelection(selected: List<ImportedDocument>): List<ImportedDocument> {
@@ -180,39 +284,67 @@ public class LocalContentManager(
         return works
     }
 
+    /**
+     * Imports one TXT/EPUB into the library, asking for a TXT's encoding when needed; null when
+     * the user skips it. The question is asked before anything is written, and the answer is kept
+     * for the attempts of [importIntoLibrary].
+     */
     private suspend fun importTypedDocument(
         document: ImportedDocument,
         syncContentBodies: Boolean,
-    ): LocalTypedImport =
+        encoding: TextEncodingPrompt,
+        library: LibraryWrites,
+    ): LibraryChange? {
+        val question = try {
+            val automatic = LocalTextEncodingRequest(askAlways = encoding.always)
+            return importIntoLibrary(library) { prepareTypedDocument(document, syncContentBodies, automatic) }
+        } catch (required: LocalTextEncodingChoiceRequired) {
+            required.question
+        }
+        return encoding.choose(question)?.let { chosen ->
+            val request = LocalTextEncodingRequest(chosen)
+            importIntoLibrary(library) { prepareTypedDocument(document, syncContentBodies, request) }
+        }
+    }
+
+    private suspend fun prepareTypedDocument(
+        document: ImportedDocument,
+        syncContentBodies: Boolean,
+        textEncoding: LocalTextEncodingRequest,
+    ): PreparedTypedImport =
         try {
-            withContext(defaultDispatcher) {
+            preparedOffCaller(defaultDispatcher) {
                 val importContext = currentCoroutineContext()
-                requireNotNull(typedContent).import(
+                requireNotNull(typedContent).prepare(
                     document = document,
                     syncContentBodies = syncContentBodies,
                     cancellationCheckpoint = { importContext.ensureActive() },
+                    textEncoding = textEncoding,
+                    isInLibrary = { chapterUrl -> typedLibraryManga(chapterUrl)?.favorite == true },
                 )
             }
         } catch (error: CancellationException) {
             throw error
         } catch (error: LocalContentImportException) {
             throw error
+        } catch (error: LocalTextEncodingChoiceRequired) {
+            throw error
         } catch (error: Throwable) {
             throw LocalContentImportException(
-                "Unable to import typed document “${document.name}”.",
+                withFailureReason("Unable to import typed document “${document.name}”", error),
                 error,
             )
         }
 
-    private suspend fun importImageWork(
+    private suspend fun prepareImageWork(
         typed: LocalTypedContentController,
         work: LocalWork,
         syncContentBodies: Boolean,
-    ): LocalTypedImport =
+    ): PreparedTypedImport =
         try {
-            withContext(defaultDispatcher) {
+            preparedOffCaller(defaultDispatcher) {
                 val importContext = currentCoroutineContext()
-                typed.importImageSequence(
+                typed.prepareImageSequence(
                     title = work.title,
                     pages = work.pages.mapIndexed { index, page ->
                         page.toTypedSource(index) { importContext.ensureActive() }
@@ -228,7 +360,7 @@ public class LocalContentManager(
             throw error
         } catch (error: Throwable) {
             throw LocalContentImportException(
-                "Unable to import image publication “${work.title}”.",
+                withFailureReason("Unable to import image publication “${work.title}”", error),
                 error,
             )
         }
@@ -395,21 +527,44 @@ public class LocalContentManager(
         }
     }
 
-    private suspend fun persistTyped(content: LocalTypedImport): LocalImportResult {
+    /**
+     * Commits the content of [prepared] and writes its rows, together under the repository lock.
+     * Null, with nothing written, when a restore changed the content store since it was prepared.
+     */
+    private suspend fun persistTyped(prepared: PreparedTypedImport): LibraryChange? {
+        val content = prepared.content
         val timestamp = content.acquiredAtEpochMillis ?: now()
         val mangaUrl = content.chapterUrl.substringBeforeLast('/')
-        val seed = repository.upsertManga(
-            typedCompatibilityManga(content, mangaUrl, timestamp),
-        )
-        val chapter = repository.upsertChapter(
-            typedCompatibilityChapter(content, seed.id, timestamp),
-        )
-        return LocalImportResult(
-            mangaId = seed.id,
-            chapterId = chapter.id,
-            title = content.title,
-            pageCount = content.itemCount,
-        )
+        // The links of a title already in the library, which a reading it replaces can add to
+        // (removeFromLibrary): undoing the import gives it back exactly these.
+        val categoryIds = repository.manga(LOCAL_SOURCE_ID, mangaUrl)?.takeIf(Manga::favorite)
+            ?.let { repository.categoryIdsOfManga(it.id) }.orEmpty()
+        val written = try {
+            repository.upsertMangaWithChapterAfter(
+                manga = typedCompatibilityManga(content, mangaUrl, timestamp),
+                chapter = { mangaId -> typedCompatibilityChapter(content, mangaId, timestamp) },
+                commitContent = prepared::commit,
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            throw LocalContentImportException(withFailureReason("Unable to import “${content.title}”", error), error)
+        }
+        return written?.let {
+            LibraryChange(
+                before = written.before,
+                after = written.manga,
+                replacementCount = written.replacementCount,
+                result = LocalImportResult(
+                    mangaId = written.manga.id,
+                    chapterId = written.chapter.id,
+                    title = content.title,
+                    pageCount = content.itemCount,
+                ),
+                content = content,
+                links = LibraryChangeLinks(categoryIds),
+            )
+        }
     }
 
     private fun typedCompatibilityManga(
@@ -570,7 +725,7 @@ public class LocalContentManager(
 
     private fun isLocalManga(mangaId: Long): Boolean = repository.manga(mangaId)?.source == LOCAL_SOURCE_ID
 
-    private fun localDirectory(mangaId: Long, chapterId: Long): String = "local/$mangaId/$chapterId"
+    private fun localDirectory(mangaId: Long, chapterId: Long): String = localChapterDirectory(mangaId, chapterId)
 }
 
 private data class LocalWork(
@@ -606,3 +761,28 @@ public val LOCAL_IMPORTED_DOCUMENT_LIMITS: ImportedDocumentLimits = ImportedDocu
     ),
     randomAccessExtensions = setOf(LOCAL_EPUB_EXTENSION),
 )
+
+/**
+ * Runs [prepare] on [dispatcher] and hands the prepared import to the caller. A cancellation that
+ * comes after [prepare] returned, but before the caller got the result, would drop the import
+ * with its bodies staged (an EPUB's blobs have fixed ids, and their receipts would refuse the next
+ * import of the file): it is abandoned here instead, and the cancellation goes on.
+ */
+private suspend fun preparedOffCaller(
+    dispatcher: CoroutineDispatcher,
+    prepare: suspend () -> PreparedTypedImport,
+): PreparedTypedImport {
+    val handoff = PreparedHandoff()
+    var delivered = false
+    try {
+        return withContext(dispatcher) { prepare().also { handoff.prepared = it } }.also { delivered = true }
+    } finally {
+        if (!delivered) handoff.prepared?.abandon()
+    }
+}
+
+/** The import [preparedOffCaller] prepared, until the caller has it. */
+private class PreparedHandoff {
+    @kotlin.concurrent.Volatile
+    var prepared: PreparedTypedImport? = null
+}

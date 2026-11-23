@@ -95,6 +95,8 @@ public data class BrowseHost(
     /** Closes a legacy detail route owned by a source/search parent outside this composable. */
     val onParentDismissed: () -> Unit = {},
     val onReaderVisibilityChanged: (Boolean) -> Unit = {},
+    /** The user started opening a chapter of a publication in the reader (it shows once loaded). */
+    val onReaderOpening: () -> Unit = {},
 )
 
 /** A position an extension reader reached, for the app's reading history. */
@@ -189,6 +191,10 @@ internal class BrowseScreenState(
     fun closePublication() {
         overlays = overlays.closePublication()
         readerVisibilityChanged(false)
+    }
+
+    fun readerOpening() {
+        host?.onReaderOpening?.invoke()
     }
 
     fun setReaderVisible(visible: Boolean) {

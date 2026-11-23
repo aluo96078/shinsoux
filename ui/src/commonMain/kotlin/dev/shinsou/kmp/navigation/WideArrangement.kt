@@ -48,3 +48,23 @@ internal fun wideArrangement(state: NavigationState, splitDetail: Boolean): Wide
         )
     }
 }
+
+/**
+ * On a phone, the library publication whose open reader stays mounted beneath the page in front
+ * of it (a recovery a deep link starts), as [wideArrangement] keeps it in a wide window; null
+ * when the reader is not open or is itself the page in front.
+ */
+internal fun phoneReaderBeneath(state: NavigationState): PageEntry.LocalExtension? =
+    state.stack.localExtension?.takeIf { state.browseReaderOpen && state.stack.top != it }
+
+/**
+ * Whether an open extension reader has another page in front of it, so the reader must give up
+ * keys and volume buttons. A library publication's reader is covered by any page above its entry;
+ * the Browse section's own reader (no entry of its own) by any pushed page, such as a title a
+ * link opened while the chapter loaded.
+ */
+internal fun openReaderCovered(state: NavigationState): Boolean {
+    if (!state.browseReaderOpen) return false
+    val host = state.stack.localExtension
+    return if (host != null) state.stack.top != host else state.stack.top != null
+}

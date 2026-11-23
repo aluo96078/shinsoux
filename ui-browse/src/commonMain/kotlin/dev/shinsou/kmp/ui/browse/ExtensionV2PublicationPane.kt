@@ -150,6 +150,7 @@ public fun <S> ExtensionV2PublicationPane(
     state.onReaderVisibilityChanged = navigation.reader.onVisibilityChanged
     state.onReaderUnitChanged = navigation.reader.onUnitChanged
     state.isShown = navigation.reader.isShown
+    state.onReaderOpening = navigation.reader.onOpening
     DisposableEffect(state) {
         // Another title replaced this one (a wide layout keeps the library clickable): a chapter
         // it was still opening no longer opens the reader over the new title.
@@ -157,6 +158,7 @@ public fun <S> ExtensionV2PublicationPane(
             state.onReaderVisibilityChanged = {}
             state.onReaderUnitChanged = {}
             state.isShown = { false }
+            state.onReaderOpening = {}
         }
     }
     // Visibility is opened explicitly when materialization returns and closed explicitly by the

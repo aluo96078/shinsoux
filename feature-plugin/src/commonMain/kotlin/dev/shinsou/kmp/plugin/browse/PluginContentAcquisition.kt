@@ -143,7 +143,7 @@ internal class PluginContentAcquisition(
         val localChapter = localSnapshot?.chapters?.firstOrNull { it.url == localChapterUrl }
         val localLocator = localChapter?.let { chapter ->
             localSnapshot.histories.firstOrNull { it.chapterId == chapter.id }?.lastLocator
-        }?.takeIf { locator -> readable.content.navigation.indexOf(locator) != null }
+        }?.let(readable.content.navigation::resolve)
         // Opened here the first time: it starts where another device left it, so the first
         // progress saved here does not send that device's place back to the chapter's start.
         val synced = if (localLocator == null && localChapter?.lastPageRead.let { it == null || it == 0 }) {
@@ -151,10 +151,11 @@ internal class PluginContentAcquisition(
         } else {
             null
         }
-        val syncedLocator = synced?.locator?.takeIf { locator -> readable.content.navigation.indexOf(locator) != null }
+        val syncedLocator = synced?.locator?.let(readable.content.navigation::resolve)
         TypedReaderContentSession(
             content = readable.content.copy(
                 initialLocator = localLocator ?: syncedLocator ?: readable.content.initialLocator,
+                initialLocatorSaved = localLocator != null || syncedLocator != null,
             ),
             canonicalText = readable.canonicalText,
             access = readable.access,

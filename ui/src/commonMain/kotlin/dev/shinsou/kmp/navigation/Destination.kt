@@ -194,6 +194,11 @@ internal data class NavigationState(
     val backRequests: BackRequests = BackRequests(),
     /** The last request token minted for a [PageEntry.Pending] or [PageEntry.Recovering]; only grows. */
     val requestSerial: Long = 0L,
+    /**
+     * How many detail pages were opened; only grows. Tells a detail opened again for the same
+     * title apart from the one that was there before ([AppNavigator.setBrowseSectionReaderOpen]).
+     */
+    val detailOpenings: Long = 0L,
 ) {
     /** The page a phone shows above the section ([Destination.Section] when none is pushed). */
     val destination: Destination get() = stack.top?.destination ?: Destination.Section

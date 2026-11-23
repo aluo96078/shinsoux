@@ -200,7 +200,7 @@ private fun BoxScope.ReaderPageBar(
                 valueRange = 0f..sliderMax,
                 modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
             )
-            Text("$pageCount", color = Color.White, style = MaterialTheme.typography.labelLarge)
+            Text("${pageCount.coerceAtLeast(page + 1)}", color = Color.White, style = MaterialTheme.typography.labelLarge)
         }
         Row(
             Modifier.fillMaxWidth(),
@@ -217,7 +217,8 @@ private fun BoxScope.ReaderPageBar(
                 color = Color.White.copy(alpha = 0.12f),
             ) {
                 Text(
-                    "${page + 1} / $pageCount",
+                    // Never "x / 0": a count not reported yet is at least the page on screen.
+                    "${page + 1} / ${pageCount.coerceAtLeast(page + 1)}",
                     color = Color.White,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 )

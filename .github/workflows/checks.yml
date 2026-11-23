@@ -113,7 +113,7 @@ jobs:
       - name: Desktop tests and coverage
         working-directory: shinsoux
         run: >-
-          ./gradlew desktopTest :composeApp:koverXmlReportDesktop :composeApp:koverVerifyDesktop
+          ./gradlew :build-logic:test desktopTest :composeApp:koverXmlReportDesktop :composeApp:koverVerifyDesktop
           --continue
           -PshinsouPluginRepository=../../shinsou_plugin
           -Pkotlin.native.enableKlibsCrossCompilation=false --stacktrace

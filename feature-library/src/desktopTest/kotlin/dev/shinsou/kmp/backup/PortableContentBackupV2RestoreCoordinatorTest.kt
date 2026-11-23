@@ -78,6 +78,31 @@ import kotlinx.coroutines.test.runTest
 
 class PortableContentBackupV2RestoreCoordinatorTest {
     @Test
+    fun aReceiptAnotherOperationConsumedIsClaimedAgainAtTheCommit() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val foundation = ContentFoundationRuntime(driver)
+        try {
+            val blobs = foundation.blobStore
+            val kept = blobs.put("kept".encodeToByteArray(), "text/plain")
+            // A local import shared this receipt and has consumed it since (given up here alike).
+            val gone = blobs.put("gone".encodeToByteArray(), "text/plain")
+            blobs.releasePendingReceipts(listOf(gone))
+
+            val reclaimed = mutableListOf<dev.shinsou.kmp.content.blob.BlobPublishReceipt>()
+            val refreshed = blobs.refreshedReceipts(listOf(kept, gone), reclaimed)
+            assertEquals(listOf(refreshed[1]), reclaimed, "recorded as it was claimed")
+
+            kotlin.test.assertSame(kept, refreshed[0])
+            kotlin.test.assertNotSame(gone, refreshed[1])
+            assertEquals(gone.reference, refreshed[1].reference)
+            assertEquals(setOf(kept, refreshed[1]), blobs.pendingReceipts().toSet())
+        } finally {
+            foundation.close()
+            driver.close()
+        }
+    }
+
+    @Test
     fun missingOfflineStoreGrantDeniesBeforeBodyPublish() = runTest {
         val archive = archiveFixture(
             allowedOperations = DEFAULT_ALLOWED_OPERATIONS - ContentOperation.OFFLINE_STORE,

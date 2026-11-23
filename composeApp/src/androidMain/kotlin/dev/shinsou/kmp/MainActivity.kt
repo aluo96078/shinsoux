@@ -53,7 +53,9 @@ import dev.shinsou.kmp.ui.settings.writeBinaryDocumentWithFailureCleanup
 import dev.shinsou.kmp.ui.settings.writeCheckedTo
 import dev.shinsou.kmp.ui.i18n.shinsouStringsFor
 import java.util.Locale
+import java.io.FileInputStream
 import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
@@ -576,45 +578,62 @@ class MainActivity : FragmentActivity() {
             private val displayName: String,
             override val byteSize: Long,
         ) : ImportedDocumentSource {
+            /**
+             * One descriptor for the whole import. Opening it costs a provider round trip (an IPC
+             * call for SAF documents), and a large EPUB used to reopen it for every 64 KiB read.
+             */
+            private var descriptor: ParcelFileDescriptor? = null
+            private var channel: FileChannel? = null
+
+            @Synchronized
             override fun read(offset: Long, byteCount: Int): ByteArray {
                 require(offset in 0..byteSize && byteCount >= 0 &&
                     byteCount.toLong() <= byteSize - offset) { "Imported document read is out of bounds" }
                 val output = ByteArray(byteCount)
                 if (byteCount == 0) return output
                 try {
-                    val descriptor = contentResolver.openFileDescriptor(uri, "r")
-                        ?: throw ImportedDocumentReadException("Unable to open “$displayName”.")
-                    val actualSize = descriptor.statSize.takeIf { it >= 0 }
-                    if (actualSize != null && actualSize != byteSize) {
-                        descriptor.close()
-                        throw ImportedDocumentReadException(
-                            "“$displayName” changed while it was being imported.",
-                        )
-                    }
-                    ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
-                        val channel = input.channel
-                        channel.position(offset)
-                        val buffer = ByteBuffer.wrap(output)
-                        while (buffer.hasRemaining()) {
-                            if (channel.read(buffer) <= 0) {
-                                throw ImportedDocumentReadException(
-                                    "“$displayName” changed while it was being imported.",
-                                )
-                            }
-                        }
-                        val finalSize = descriptor.statSize.takeIf { it >= 0 }
-                        if (finalSize != null && finalSize != byteSize) {
-                            throw ImportedDocumentReadException(
-                                "“$displayName” changed while it was being imported.",
-                            )
-                        }
-                    }
+                    readFully(output, offset)
                     return output
                 } catch (error: ImportedDocumentReadException) {
                     throw error
                 } catch (error: Throwable) {
                     throw ImportedDocumentReadException("Unable to read “$displayName”.", error)
                 }
+            }
+
+            private fun readFully(output: ByteArray, offset: Long) {
+                val reader = openChannel()
+                val buffer = ByteBuffer.wrap(output)
+                var progressing = true
+                while (buffer.hasRemaining() && progressing) {
+                    progressing = reader.read(buffer, offset + buffer.position()) > 0
+                }
+                // fstat of the held descriptor, no provider round trip: a file that grew or shrank
+                // since it was opened would otherwise import as its original prefix.
+                val currentSize = descriptor?.statSize?.takeIf { it >= 0 }
+                if (buffer.hasRemaining() || (currentSize != null && currentSize != byteSize)) {
+                    throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
+                }
+            }
+
+            private fun openChannel(): FileChannel {
+                channel?.let { return it }
+                val opened = contentResolver.openFileDescriptor(uri, "r")
+                    ?: throw ImportedDocumentReadException("Unable to open “$displayName”.")
+                val actualSize = opened.statSize.takeIf { it >= 0 }
+                if (actualSize != null && actualSize != byteSize) {
+                    opened.close()
+                    throw ImportedDocumentReadException("“$displayName” changed while it was being imported.")
+                }
+                descriptor = opened
+                return FileInputStream(opened.fileDescriptor).channel.also { channel = it }
+            }
+
+            @Synchronized
+            override fun close() {
+                channel = null
+                descriptor?.close()
+                descriptor = null
             }
         }
 

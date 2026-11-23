@@ -1015,6 +1015,27 @@ class SqlDriverContentFoundationRestartTest {
         }
     }
 
+    @Test
+    fun anEpubPublishedWhileAnotherOperationHoldsItsReceiptsSharesThem() {
+        val blobs = dev.shinsou.kmp.content.blob.InMemoryContentBlobStore()
+        val target = LocalAcquisitionTarget(
+            publicationKey = PublicationKey("92929292-9292-4292-8292-929292929292"),
+            publicationTitle = "Shared EPUB",
+            stableImportId = "shared/epub-package",
+            contentRevision = 0,
+        )
+        val service = EpubAcquisitionService(blobs, archiveExtractor = EpubArchiveExtractor { _, _ -> epubRestartEntries() })
+        val request = EpubAcquisitionRequest(target, "shared epub archive".encodeToByteArray())
+        // A backup restore of the same book holds the receipts of its blobs, which have fixed ids.
+        val restore = service.acquire(request)
+        val import = service.acquire(request)
+        assertEquals(restore.publishedBlobs.map { it.reference }, import.publishedBlobs.map { it.reference })
+        blobs.releasePendingReceipts(restore.publishedBlobs)
+        assertEquals(import.publishedBlobs.size, blobs.pendingReceiptCount, "the import still holds them")
+        blobs.releasePendingReceipts(import.publishedBlobs)
+        assertEquals(0, blobs.pendingReceiptCount)
+    }
+
     private fun epubRestartEntries(): List<EpubArchiveEntry> {
         fun entry(path: String, text: String): EpubArchiveEntry {
             val bytes = text.trimIndent().encodeToByteArray()

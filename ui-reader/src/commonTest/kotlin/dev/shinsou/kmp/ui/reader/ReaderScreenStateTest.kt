@@ -137,6 +137,65 @@ class ReaderScreenStateTest {
     }
 
     @Test
+    fun onlyTheSliderAtItsEndAsksForTheLastPageOfTheText() {
+        val host = Host()
+        val state = ReaderScreenState()
+        val text = ReaderContentShape(ReaderContentKind.TEXT, "t1", itemCount = 40, initialItemIndex = 0)
+        state.bind(inputs(pageCount = 0, unified = text), host.callbacks)
+        state.onUnifiedPageObserved(pageIndex = 8, pageCount = 10)
+
+        // A page turn onto the last page (Next, a tap, a volume key) is not a jump to the end.
+        state.requestPage(9)
+        assertEquals(9, state.pageRequest.targetIndex)
+        assertFalse(state.pageRequest.toDocumentEnd)
+        state.onUnifiedPageObserved(pageIndex = 8, pageCount = 10)
+        state.handlePageAction(ReaderTapAction.NEXT_PAGE)
+        assertFalse(state.pageRequest.toDocumentEnd)
+        state.handleVolumeKey(ReaderVolumeKeyEvent.VOLUME_DOWN)
+        assertFalse(state.pageRequest.toDocumentEnd)
+
+        state.seekPage(5)
+        assertFalse(state.pageRequest.toDocumentEnd)
+        state.seekPage(9)
+        assertEquals(9, state.pageRequest.targetIndex)
+        assertTrue(state.pageRequest.toDocumentEnd)
+        // The next ordinary request is a page turn again.
+        state.requestPage(3)
+        assertFalse(state.pageRequest.toDocumentEnd)
+    }
+
+    @Test
+    fun typedContentLeavesItsProgressToItsLocatorReports() {
+        val host = Host()
+        val state = ReaderScreenState()
+        val text = ReaderContentShape(ReaderContentKind.TEXT, "t1", itemCount = 40, initialItemIndex = 0)
+        state.bind(inputs(pageCount = 0, unified = text), host.callbacks)
+        // The reader reported page 30 of 600 with its locator; its numbering moved since.
+        state.onUnifiedPageObserved(pageIndex = 31, pageCount = 620)
+
+        // The reader reports what it has not reported yet, before the chapter or the reader is left.
+        state.progressFlush.register { host.events += "flush" }
+        state.openNextChapter()
+        state.handleReaderBack()
+        assertEquals(emptyList(), host.positions, "no page written without its count over the locator's pair")
+        assertEquals(listOf("flush", "next", "flush", "close"), host.events)
+
+        // While it may not report (loading, a transition under way), nothing is flushed.
+        val loading = ReaderScreenState()
+        loading.bind(inputs(pageCount = 0, unified = text, loading = true), host.callbacks)
+        var flushed = 0
+        loading.progressFlush.register { flushed++ }
+        loading.handleReaderBack()
+        assertEquals(0, flushed)
+
+        // The page reader still commits its page on leaving.
+        val pages = ReaderScreenState()
+        pages.bind(inputs(storedPage = 2), host.callbacks)
+        pages.openNextChapter()
+        assertEquals(listOf(2), host.positions)
+    }
+
+    @Test
     fun aNewChapterOrSessionStartsAfreshButKeepsTranslationRequests() {
         val host = Host()
         val state = ReaderScreenState()

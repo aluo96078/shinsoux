@@ -281,6 +281,15 @@ public interface ContentBlobStore {
      */
     public fun claimExistingVerified(reference: BlobRef): BlobPublishReceipt?
 
+    /**
+     * Gives up [receipts] whose metadata transaction will not happen (an import abandoned before
+     * its commit). Their blobs stay as they are, unattached, so a later publish of the same blob
+     * is not refused for an unconsumed receipt, and a recovery sweep may collect them. A receipt
+     * already consumed, or not issued by this store, is ignored. A receipt [claimExistingVerified]
+     * handed to another operation as well stays pending until every holder released it.
+     */
+    public fun releasePendingReceipts(receipts: List<BlobPublishReceipt>) {}
+
     public fun attached(
         owner: ContentManifestOwner,
         manifestId: String,
@@ -415,6 +424,20 @@ public interface ContentBlobStore {
         }
     }
 }
+
+/**
+ * The receipt of [reference], a blob of a fixed id: claimed when this store has it already, also
+ * while another operation (a backup restore, another import of the same book) holds a pending
+ * receipt of it, which is then shared ([ContentBlobStore.claimExistingVerified]); [publish]ed
+ * otherwise. One the other operation published between the claim and the publish, which the
+ * store refuses to publish again, is claimed after all.
+ */
+public fun ContentBlobStore.claimOrPublish(reference: BlobRef, publish: () -> BlobPublishReceipt): BlobPublishReceipt =
+    claimExistingVerified(reference) ?: try {
+        publish()
+    } catch (refused: ContentBlobStoreException.InvalidStage) {
+        claimExistingVerified(reference) ?: throw refused
+    }
 
 /**
  * Internal participant used by a metadata store while its SQLite transaction is open.

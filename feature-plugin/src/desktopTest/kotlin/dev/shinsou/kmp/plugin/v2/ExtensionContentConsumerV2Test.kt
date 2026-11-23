@@ -147,6 +147,21 @@ class ExtensionContentConsumerV2Test {
     }
 
     @Test
+    fun extensionTextThatScoresLikeLegacyChineseIsStoredAsTheUtf8ItIs() = runTest {
+        withFoundation { foundation ->
+            // Read as GB18030 this is 位 = c么te, as likely as a legacy novel; it is UTF-8 by construction.
+            val text = List(40) { "λ = côte" }.joinToString("\n")
+            val source = FixtureSource(payloads = { remoteUnitId -> listOf(inlinePayload("primary", remoteUnitId, text)) })
+            val consumer = consumer(foundation, source)
+            val selection = consumer.publicationPage(SOURCE_KEY, PUBLICATION_ID).units.single()
+
+            val materialized = consumer.materialize(selection, "primary")
+
+            assertEquals(text, consumer.open(materialized).canonicalText)
+        }
+    }
+
+    @Test
     fun localReadingStateMapsTypedUnitKeysBackToOpaqueRemoteIds() = runTest {
         withFoundation { foundation ->
             var completedUnitKey: UnitKey? = null

@@ -239,6 +239,7 @@ private fun ShinsouAppContent(
     val capabilities = appServices.securityCapabilities
     val appLockEnabled = securityFeatureEnabled(security.appLockEnabled, capabilities.appLock)
     val readerOpen = readerState.session != null || nav.browseReaderOpen
+    val readerInFront = app.readerInFront(readerState.session != null, nav.browseReaderOpen)
 
     LaunchedEffect(queuesPaused) { app.downloadsPaused.value = queuesPaused }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
@@ -248,6 +249,7 @@ private fun ShinsouAppContent(
     PresentationEffects(
         app = app,
         readerOpen = readerOpen,
+        readerInFront = readerInFront,
         readerSettings = snapshot.settings.reader,
         secureScreen = securityFeatureEnabled(security.secureScreen, capabilities.secureScreen),
     )
@@ -265,7 +267,7 @@ private fun ShinsouAppContent(
             .shellInput(
                 app = app,
                 interceptVolumeKeys = effectiveReaderVolumeKeyMonitoringEnabled(
-                    readerOpen = readerOpen,
+                    readerOpen = readerInFront,
                     configured = snapshot.settings.reader.volumeKeys,
                 ),
                 backKey = backKey,
@@ -301,6 +303,7 @@ private fun ShinsouAppContent(
                     )
                 }
                 if (lockState.unlocked && lifecycle == AppLifecycleState.FOREGROUND) PluginLogoutDialog(app)
+                LocalImportEncodingDialog(shown = lockState.unlocked)
                 if (!lockState.unlocked) AppLockOverlay(app, lockState)
             }
         }

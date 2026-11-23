@@ -118,6 +118,9 @@ internal class ReaderScreenState {
     var pageRequest by mutableStateOf(UnifiedReaderPageRequest(0))
         private set
 
+    /** The typed reader on screen reports through this, at once, what it has not reported yet. */
+    val progressFlush: ReaderProgressFlush = ReaderProgressFlush()
+
     /** The unified renderer reported its real pagination for the current layout. */
     var pageCountMeasured by mutableStateOf(false)
 
@@ -205,7 +208,7 @@ internal class ReaderScreenState {
     private fun initialPageCount(unified: ReaderContentShape?): Int = when (unified?.kind) {
         ReaderContentKind.IMAGES -> unified.itemCount
         ReaderContentKind.TEXT, ReaderContentKind.EPUB ->
-            unified.initialPageCount ?: unified.initialPageIndex?.plus(1) ?: 1
+            (unified.initialPageCount ?: unified.initialPageIndex?.plus(1) ?: 1).coerceAtLeast(1)
         null -> 0
     }.coerceAtLeast(0)
 
@@ -220,10 +223,19 @@ internal class ReaderScreenState {
         interactionBlocked = current.loading,
     )
 
-    /** Reports the position the reader is at, when it may report one. */
+    /**
+     * Reports the position the page reader is at, when it may report one. Typed content reports
+     * its own progress, as a locator with the page and page count of one numbering, on every page
+     * it arrives at: a page alone reported here, with no count, would be written over that pair
+     * (and a long text's page number moves while its layout goes on).
+     */
     fun commitCurrentPosition() {
         val input = current
-        if (input.positionReportingEnabled && !input.loading && pageCount > 0) {
+        val reporting = input.positionReportingEnabled && !input.loading
+        // Typed content: its position not reported yet is reported now, with its locator; not
+        // while it may not report (a transition is under way), when it would be refused unwritten.
+        if (unifiedEnabled && reporting) progressFlush.flush()
+        if (!unifiedEnabled && pageCount > 0 && reporting) {
             callbacks?.onPositionChanged?.invoke(currentPosition)
         }
     }
@@ -267,6 +279,18 @@ internal class ReaderScreenState {
 
     /** Moves to page [index]; past either end it crosses (prose) or shows the boundary card (pages). */
     fun requestPage(index: Int) {
+        movePage(index, seek = false)
+    }
+
+    /**
+     * The page slider moved to page [index]: as [requestPage], but the slider at its end asks
+     * for the last page of the text, however many pages the end of a long text turns out to have.
+     */
+    fun seekPage(index: Int) {
+        movePage(index, seek = true)
+    }
+
+    private fun movePage(index: Int, seek: Boolean) {
         val count = pageCount
         when {
             index !in 0 until count && !mayCrossChapter() -> Unit
@@ -274,13 +298,13 @@ internal class ReaderScreenState {
             index < 0 -> boundaryTransition = ReaderChapterBoundary.PREVIOUS
             index >= count && proseReader -> openNextChapter()
             index >= count -> boundaryTransition = ReaderChapterBoundary.NEXT
-            count > 0 -> moveTo(index.coerceIn(0, (count - 1).coerceAtLeast(0)), index, count)
+            count > 0 -> moveTo(index.coerceIn(0, (count - 1).coerceAtLeast(0)), index, count, toEnd = seek && index >= count - 1)
         }
     }
 
-    private fun moveTo(target: Int, logicalIndex: Int, count: Int) {
+    private fun moveTo(target: Int, logicalIndex: Int, count: Int, toEnd: Boolean = false) {
         boundaryTransition = null
-        if (unifiedEnabled) pageRequest = pageRequest.request(target)
+        if (unifiedEnabled) pageRequest = pageRequest.request(target, toDocumentEnd = toEnd)
         val mode = current.settings.readingMode
         currentPosition = if (continuous()) {
             ReaderPosition(

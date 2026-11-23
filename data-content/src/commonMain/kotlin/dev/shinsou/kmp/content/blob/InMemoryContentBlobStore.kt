@@ -183,7 +183,12 @@ public class InMemoryContentBlobStore(
         // A pending receipt was issued only after this exact immutable incarnation passed full
         // verification. Return it before touching durable payload bytes again; final transaction
         // validation still re-verifies every receipt immediately before attachment.
-        matchingPending.singleOrNull()?.let { return it.receipt }
+        // The receipt is shared: each claimant holds it until it is consumed or that claimant
+        // gives it up ([releasePendingReceipts]), so one giving it up cannot take it from another.
+        matchingPending.singleOrNull()?.let { pending ->
+            pending.holders++
+            return pending.receipt
+        }
         if (!isIntact(stored)) {
             throw ContentBlobStoreException.CorruptBlob(reference.blobId)
         }
@@ -213,6 +218,14 @@ public class InMemoryContentBlobStore(
         )
         published[commitToken] = PendingReceipt(receipt)
         receipt
+    }
+
+    override fun releasePendingReceipts(receipts: List<BlobPublishReceipt>): Unit = withStateLock {
+        receipts.forEach { receipt ->
+            val pending = published[receipt.commitToken]
+                ?.takeIf { receipt.storeInstanceId == storeInstanceId && it.receipt === receipt }
+            if (pending != null && --pending.holders <= 0) published.remove(receipt.commitToken)
+        }
     }
 
     /** Low-level contract-test seam; production attachment must use SharedContentTransactionStore. */
@@ -930,7 +943,10 @@ public class InMemoryContentBlobStore(
         nextIncarnationValue = checkedAdd(maximumIncarnation, 1L)
     }
 
-    private data class PendingReceipt(val receipt: BlobPublishReceipt)
+    /** An unconsumed receipt, and how many operations hold it (a claim of it while pending is another). */
+    private class PendingReceipt(val receipt: BlobPublishReceipt) {
+        var holders: Int = 1
+    }
 
     private data class AttachmentLedger(
         val record: BlobAttachment,

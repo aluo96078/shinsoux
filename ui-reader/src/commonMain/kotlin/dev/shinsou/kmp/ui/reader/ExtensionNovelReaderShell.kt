@@ -84,6 +84,9 @@ public data class PendingExtensionRepresentationSelection(
 
 private class LatestExtensionReaderProgress {
     var position: ReaderProgressPosition? = null
+
+    /** [position] has been reported already: leaving the reader need not write it again. */
+    var reported: Boolean = false
 }
 
 public enum class ExtensionChapterFilter {
@@ -199,8 +202,15 @@ public fun ExtensionNovelReaderShell(
     }
     val currentProgressCallback by rememberUpdatedState(onReaderProgress)
 
+    // The reader reports at once, through this, a position it is still waiting to report.
+    val progressFlush = remember(session) { ReaderProgressFlush() }
+
     fun commitLatestProgress() {
-        latestProgress.position?.let(currentProgressCallback)
+        // A position the reader has not reported yet is reported now, as a locator with its page
+        // and count, and so the latest one is written once: here only when nothing reported it.
+        progressFlush.flush()
+        if (!latestProgress.reported) latestProgress.position?.let(currentProgressCallback)
+        latestProgress.reported = true
     }
 
     fun closeReader() {
@@ -248,7 +258,7 @@ public fun ExtensionNovelReaderShell(
         }
     }
 
-    fun requestPage(index: Int) {
+    fun requestPage(index: Int, seek: Boolean = false) {
         when {
             index !in 0 until pageCount &&
                 !readerMayCrossChapterBoundary(
@@ -264,7 +274,8 @@ public fun ExtensionNovelReaderShell(
             }
             index in 0 until pageCount -> {
                 currentPage = index
-                pageRequest = pageRequest.request(index)
+                // Only the slider taken to its end asks for the very last page.
+                pageRequest = pageRequest.request(index, toDocumentEnd = seek && index == pageCount - 1)
             }
         }
     }
@@ -324,13 +335,16 @@ public fun ExtensionNovelReaderShell(
     val volumeKeyHandlerSlot = remember(session) { ReaderVolumeKeyHandlerSlot() }
     volumeKeyHandlerSlot.update(::handleVolumeKey)
     DisposableEffect(volumeKeyRouter, volumeKeyHandlerSlot) {
-        val registration = volumeKeyRouter?.register(volumeKeyHandlerSlot::dispatch)
+        val registration = volumeKeyRouter?.register(coverable = true, handler = volumeKeyHandlerSlot::dispatch)
         onDispose { registration?.unregister() }
     }
 
-    LaunchedEffect(session, settingsVisible) {
+    // A page in front of the mounted reader (a recovery, for instance) owns the keyboard: the
+    // reader gives up focus and pages from no key until it is in front again.
+    val covered = volumeKeyRouter?.covered == true
+    LaunchedEffect(session, settingsVisible, covered) {
         heldNavigationKeys.clear()
-        if (!settingsVisible) focusRequester.requestFocus()
+        if (!settingsVisible && !covered) focusRequester.requestFocus()
     }
 
     LaunchedEffect(systemBackRequest) {
@@ -348,13 +362,18 @@ public fun ExtensionNovelReaderShell(
             // Android is edge-to-edge; SwiftUI already supplies the iOS safe-area frame.
             .readerStatusBarsPadding()
             .focusRequester(focusRequester)
-            .focusable()
+            .focusable(enabled = !covered)
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyUp) {
                     heldNavigationKeys.remove(event.key)
                     return@onPreviewKeyEvent false
                 }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (volumeKeyRouter?.covered == true) {
+                    // Keep paging keys from reaching the reader's own surfaces too; volume, Back
+                    // and Escape go on to the platform and the page in front.
+                    return@onPreviewKeyEvent readerPagingKeyIsSwallowedWhileCovered(event.key)
+                }
                 if (!readerPreviewKeyIsHostOwned(
                         key = event.key,
                         embeddedSurfaceOwnsPaging = epubReader,
@@ -427,53 +446,62 @@ public fun ExtensionNovelReaderShell(
                 }
             },
     ) {
-        UnifiedContentReader(
-            session = session,
-            features = features,
-            copyText = copyText,
-            settings = readerSettings,
-            requestedPageIndex = pageRequest.targetIndex,
-            pageRequestSerial = pageRequest.serial,
-            navigationAction = readerNavigationAction,
-            navigationRequestKey = readerNavigationRequestKey,
-            readerControlsVisible = controlsVisible,
-            translationRequestSerial = translationRequest,
-            translationToggleSerial = translationToggle,
-            onTranslationActiveChanged = { translationActive = it },
-            workLanguage = workLanguage,
-            translationLabels = remember(title, currentUnitTitle, sourceName) {
-                dev.shinsou.kmp.translation.TranslationLabels(title, currentUnitTitle, sourceName)
-            },
-            onPageIndexChanged = { index, count ->
-                pageCountMeasured = true
-                currentPage = index
-                pageRequest = pageRequest.observe(index)
-                pageCount = count.coerceAtLeast(1)
-                latestProgress.position = latestProgress.position?.copy(
-                    pageIndex = index.coerceAtLeast(0),
-                    pageCount = count.coerceAtLeast(1),
-                )
-            },
-            onPageCountInvalidated = { pageCountMeasured = false },
-            onNavigationBoundary = ::handleNavigationBoundary,
-            onLocatorChanged = { locator, pageIndex, documentPageCount ->
-                val position = ReaderProgressPosition(
-                    locator,
-                    pageIndex.coerceAtLeast(0),
-                    documentPageCount,
-                )
-                latestProgress.position = position
-                onReaderProgress(position)
-                val navigation = session.content.navigation
-                if (navigation.indexOf(locator) == navigation.itemCount - 1 &&
-                    (locator.progression ?: 0.0) >= 0.995
-                ) {
-                    onCompleted()
-                }
-            },
-            onReaderTap = ::handleTap,
-            modifier = Modifier.fillMaxSize(),
-        )
+        androidx.compose.runtime.CompositionLocalProvider(LocalReaderProgressFlush provides progressFlush) {
+            UnifiedContentReader(
+                session = session,
+                features = features,
+                copyText = copyText,
+                settings = readerSettings,
+                requestedPageIndex = pageRequest.targetIndex,
+                pageRequestSerial = pageRequest.serial,
+                requestedDocumentEnd = pageRequest.toDocumentEnd,
+                navigationAction = readerNavigationAction,
+                navigationRequestKey = readerNavigationRequestKey,
+                readerControlsVisible = controlsVisible,
+                translationRequestSerial = translationRequest,
+                translationToggleSerial = translationToggle,
+                onTranslationActiveChanged = { translationActive = it },
+                workLanguage = workLanguage,
+                translationLabels = remember(title, currentUnitTitle, sourceName) {
+                    dev.shinsou.kmp.translation.TranslationLabels(title, currentUnitTitle, sourceName)
+                },
+                onPageIndexChanged = { index, count ->
+                    pageCountMeasured = true
+                    currentPage = index
+                    pageRequest = pageRequest.observe(index)
+                    pageCount = count.coerceAtLeast(1)
+                    // A text reader reports its place as a locator with its page, which this page
+                    // alone (one scrolled to, not settled on yet) would pair with an older locator.
+                    if (session.content.representation !is ContentRepresentation.PlainText) {
+                        latestProgress.position = latestProgress.position?.copy(
+                            pageIndex = index.coerceAtLeast(0),
+                            pageCount = count.coerceAtLeast(1),
+                        )
+                        latestProgress.reported = false
+                    }
+                },
+                onPageCountInvalidated = { pageCountMeasured = false },
+                onNavigationBoundary = ::handleNavigationBoundary,
+                onLocatorChanged = { locator, pageIndex, documentPageCount ->
+                    val position = ReaderProgressPosition(
+                        locator,
+                        pageIndex.coerceAtLeast(0),
+                        documentPageCount,
+                    )
+                    latestProgress.position = position
+                    latestProgress.reported = true
+                    onReaderProgress(position)
+                    val navigation = session.content.navigation
+                    if (navigation.indexOf(locator) == navigation.itemCount - 1 &&
+                        (locator.progression ?: 0.0) >= 0.995
+                    ) {
+                        onCompleted()
+                    }
+                },
+                onReaderTap = ::handleTap,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         if (controlsVisible) {
             Surface(
@@ -522,7 +550,7 @@ public fun ExtensionNovelReaderShell(
                     pageCount = pageCount,
                     hasPreviousChapter = hasCurrent && activeUnitIndex > 0,
                     hasNextChapter = hasCurrent && activeUnitIndex + 1 < units.size,
-                    onPageChange = ::requestPage,
+                    onPageChange = { index -> requestPage(index, seek = true) },
                     onPreviousChapter = {
                         units.getOrNull(activeUnitIndex - 1)?.let(::openUnitAfterProgressFlush)
                     },

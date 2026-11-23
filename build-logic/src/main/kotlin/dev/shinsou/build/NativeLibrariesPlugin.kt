@@ -4,10 +4,17 @@ import com.android.build.api.dsl.CommonExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Provider
+import org.gradle.api.provider.ValueSource
+import org.gradle.api.provider.ValueSourceParameters
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskProvider
+import org.gradle.process.CommandLineArgumentProvider
 import java.io.File
+import java.io.IOException
 
 /**
  * The native code the app ships or links (R5-2, docs/architecture/0006): the macOS and Windows
@@ -120,12 +127,19 @@ private fun Exec.stampedFetch(root: File) {
 }
 
 /**
- * What a desktop helper's CMake build reads from the repository, as inputs of its configure and
- * compile steps: the tracked sources (not `third_party/`, which is hundreds of megabytes: the
- * fetch's [stampedFetch] stamp, script and patches stand for it) and [extra] files the build embeds.
- * Without these the Exec tasks had no inputs or outputs and ran on every build.
+ * What a desktop helper's CMake build reads, as inputs of its configure and compile steps: the
+ * tracked sources, [extra] files the build embeds, the fetch's script, patches and stamp
+ * ([stampedFetch]), the C, C++ and CMake files of the fetched `third_party/` (not the rest of it,
+ * which is hundreds of megabytes of data, docs and tests), and [toolchain], the versions of CMake
+ * and of the C and C++ compilers it uses (an Xcode or MinGW upgrade, or another `CC`, builds again). Without these the Exec tasks had
+ * no inputs or outputs and ran on every build.
  */
-private class CmakeSources(val root: File, private val directories: List<String>, private val extra: List<File> = emptyList()) {
+private class CmakeSources(
+    val root: File,
+    private val directories: List<String>,
+    val toolchain: Provider<String>,
+    private val extra: List<File> = emptyList(),
+) {
     fun Task.readsSources() {
         inputs.file(File(root, "CMakeLists.txt"))
         directories.map { File(root, it) }.filter { it.isDirectory }.forEach { inputs.dir(it) }
@@ -133,6 +147,152 @@ private class CmakeSources(val root: File, private val directories: List<String>
         inputs.file(File(root, "scripts/fetch-deps.sh"))
         File(root, "patches").takeIf { it.isDirectory }?.let { inputs.dir(it) }
         inputs.files(File(root, "third_party/.fetched"))
+        inputs.files(
+            project.fileTree(File(root, "third_party")) {
+                include(THIRD_PARTY_BUILD_FILES)
+                exclude("**/.git/**")
+            },
+        ).withPropertyName("thirdPartySources").withPathSensitivity(PathSensitivity.RELATIVE)
+        inputs.property("toolchain", toolchain)
+    }
+}
+
+/**
+ * The C and C++ compilers CMake picks on macOS, as commands: `CC` and `CXX` when they are set
+ * (CMake reads them when it first configures a build directory), else Xcode's. The environment is
+ * read at configuration time, so it is a configuration input: another `CC` configures again.
+ */
+private fun Project.macOsCompilers(): List<List<String>> =
+    effectiveMacOsCompilers(providers.environmentVariable("CC").orNull, providers.environmentVariable("CXX").orNull)
+
+/**
+ * [macOsCompilers] for the given `CC` and `CXX` values. A value can carry arguments
+ * (`ccache clang`) and quote a path with spaces (`"/Applications/My Xcode.app/.../clang"`), which
+ * CMake accepts; it is split into words as [splitCommandLine] does.
+ */
+internal fun effectiveMacOsCompilers(cc: String?, cxx: String?): List<List<String>> {
+    fun command(fromEnvironment: String?, xcodeDefault: String): List<String> =
+        fromEnvironment?.let(::splitCommandLine)?.takeIf { it.isNotEmpty() }
+            ?: listOf("xcrun", xcodeDefault)
+    return listOf(command(cc, "clang"), command(cxx, "clang++"))
+}
+
+/**
+ * The CMake compiler variables to pin for [compilers] ([effectiveMacOsCompilers]), each with the
+ * Xcode tool it names: those of the languages whose compiler is Xcode's default. Without `CC` or
+ * `CXX`, CMake would look for `cc` and `c++` on the `PATH` (Homebrew's, say), not the `xcrun`
+ * compiler whose version the tasks fingerprint; one set in the environment CMake reads itself.
+ */
+internal fun macOsCompilerPinTools(compilers: List<List<String>>): List<Pair<String, String>> =
+    listOf("CMAKE_C_COMPILER", "CMAKE_CXX_COMPILER").zip(compilers).mapNotNull { (variable, command) ->
+        command.takeIf { it.size == 2 && it.first() == "xcrun" }?.let { variable to it[1] }
+    }
+
+/**
+ * `-D<variable>=<path>` for each of [macOsCompilerPinTools], the path being what `xcrun --find`
+ * gives: the compiler `xcrun <tool>` runs. A tool `xcrun` cannot find is not pinned, and CMake's
+ * own search then fails or finds one, as it did before.
+ */
+private fun Project.macOsCompilerPins(compilers: List<List<String>>): Provider<List<String>> =
+    macOsCompilerPinTools(compilers).fold(providers.provider { emptyList<String>() }) { pins, (variable, tool) ->
+        val path = providers.of(CommandOutputSource::class.java) { parameters.command.set(listOf("xcrun", "--find", tool)) }
+        pins.zip(path) { soFar, found -> soFar + listOfNotNull(found.trim().takeIf(String::isNotEmpty)?.let { "-D$variable=$it" }) }
+    }
+
+/**
+ * The words of a command line, split as a POSIX shell splits them: on unquoted whitespace, with
+ * single quotes keeping everything literal, double quotes keeping everything but a backslash
+ * before `"`, `\`, `$` or a backquote, and a backslash outside quotes making the next character
+ * literal. A quote that is never closed runs to the end. Nothing is expanded.
+ */
+internal fun splitCommandLine(value: String): List<String> {
+    val words = mutableListOf<String>()
+    val word = StringBuilder()
+    var inWord = false
+    var quote: Char? = null
+    var index = 0
+    while (index < value.length) {
+        val char = value[index++]
+        when {
+            quote == null && char.isWhitespace() -> {
+                if (inWord) words += word.toString()
+                word.clear()
+                inWord = false
+            }
+            quote == null && char in SHELL_QUOTES -> quote = char
+            char == quote -> quote = null
+            char == '\\' && escapesNext(quote, value.getOrNull(index)) -> word.append(value[index++])
+            else -> word.append(char)
+        }
+        // A quoted empty string is a word too.
+        inWord = inWord || quote != null || !char.isWhitespace()
+    }
+    if (inWord) words += word.toString()
+    return words
+}
+
+/** Whether a backslash makes [next] literal inside [quote] (null outside quotes). */
+private fun escapesNext(quote: Char?, next: Char?): Boolean = when (quote) {
+    null -> next != null
+    '"' -> next != null && next in DOUBLE_QUOTE_ESCAPED
+    else -> false
+}
+
+private const val SHELL_QUOTES = "\"'"
+private const val DOUBLE_QUOTE_ESCAPED = "\"\\\$`"
+
+/** The files of `third_party/` a CMake build compiles, includes or configures. */
+private val THIRD_PARTY_BUILD_FILES = listOf(
+    "**/*.c", "**/*.h", "**/*.cc", "**/*.cpp", "**/*.hpp", "**/*.hxx", "**/*.inl", "**/*.inc", "**/*.def",
+    "**/CMakeLists.txt", "**/*.cmake",
+    // Templates the builds' configure_file() turns into sources (marian's project_version.h.in, build_info.cpp.in).
+    "**/*.in",
+)
+
+/**
+ * `cmake --version` and, for each of [compilers] (the C and C++ compilers the configure step
+ * uses), its command and `<compiler> --version`, read when the task's inputs are fingerprinted. A
+ * tool that cannot be run (not installed, or a `CC` that names no program) leaves its version
+ * empty instead of failing the build here: the configure step then fails with CMake's own message.
+ */
+private fun Project.cmakeToolchain(compilers: List<List<String>>): Provider<String> {
+    fun version(command: List<String>) =
+        providers.of(CommandOutputSource::class.java) { parameters.command.set(command) }
+    return compilers.fold(version(listOf("cmake", "--version"))) { toolchain, compiler ->
+        toolchain.zip(version(compiler + "--version")) { soFar, compilerVersion ->
+            soFar + compiler.joinToString(" ", postfix = "\n") + compilerVersion
+        }
+    }
+}
+
+/**
+ * What a command prints ([commandOutput]). A value source, so it is read again on every build even
+ * when the configuration is taken from the cache: a toolchain upgrade must build again.
+ */
+internal abstract class CommandOutputSource : ValueSource<String, CommandOutputSource.Parameters> {
+    internal interface Parameters : ValueSourceParameters {
+        val command: ListProperty<String>
+    }
+
+    override fun obtain(): String = commandOutput(parameters.command.get())
+}
+
+/**
+ * The standard output of [command], whatever its exit value; empty when it cannot be started
+ * (there is no such program) or its output cannot be read.
+ */
+internal fun commandOutput(command: List<String>): String {
+    if (command.isEmpty()) return ""
+    return try {
+        val process = ProcessBuilder(command)
+            .redirectInput(ProcessBuilder.Redirect.from(File(if (File.separatorChar == '\\') "NUL" else "/dev/null")))
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        val output = process.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+        process.waitFor()
+        output
+    } catch (_: IOException) {
+        ""
     }
 }
 
@@ -142,13 +302,44 @@ private class CmakeSources(val root: File, private val directories: List<String>
  * (`build.ninja` for Ninja, else the `Makefile`), so a build directory that lost the build file
  * but kept the cache configures again instead of failing the build step.
  */
-private fun Exec.configuresCmake(sources: CmakeSources, buildDir: String, arguments: List<String>) {
+private fun Exec.configuresCmake(
+    sources: CmakeSources,
+    buildDir: String,
+    arguments: List<String>,
+    compilerPins: Provider<List<String>>? = null,
+) {
     with(sources) { readsSources() }
     inputs.property("cmakeArguments", arguments)
     outputs.file(File(buildDir, "CMakeCache.txt"))
     outputs.file(File(buildDir, cmakeBuildFile(arguments)))
     commandLine(listOf("cmake") + arguments)
+    // The compilers CMake is told to use are the ones the toolchain fingerprint measured.
+    if (compilerPins != null) {
+        inputs.property("compilerPins", compilerPins)
+        argumentProviders.add(CommandLineArgumentProvider { compilerPins.get() })
+    }
+    // CMake keeps the objects of a build directory whose compile commands did not change, so a
+    // compiler upgraded in place would leave them as the old one built them: another toolchain
+    // configures a fresh build directory. Only this helper's own directory under build/ is cleared.
+    val toolchain = sources.toolchain
+    val directory = File(buildDir)
+    doFirst { refreshBuildDirectoryForToolchain(directory, toolchain.get()) }
 }
+
+/**
+ * Empties [directory] unless it records this [toolchain], then records it. A directory without
+ * the record (configured before it was kept) is emptied once too: its toolchain is unknown, and the
+ * compiler may have been upgraded since.
+ */
+private fun refreshBuildDirectoryForToolchain(directory: File, toolchain: String) {
+    val record = File(directory, TOOLCHAIN_RECORD)
+    if (!record.isFile || record.readText() != toolchain) directory.deleteRecursively()
+    directory.mkdirs()
+    record.writeText(toolchain)
+}
+
+/** The toolchain a CMake build directory was configured with ([refreshBuildDirectoryForToolchain]). */
+private const val TOOLCHAIN_RECORD = "shinsou-toolchain.txt"
 
 /** The build file CMake's generator in [arguments] writes: Ninja's, else the default Makefiles'. */
 private fun cmakeBuildFile(arguments: List<String>): String {
@@ -174,16 +365,18 @@ private fun Exec.buildsCmakeTarget(
     commandLine(listOf("cmake", "--build", buildDir, "--target", target) + extraArguments)
 }
 
-private fun Project.sandboxCoreSources() = CmakeSources(
+private fun Project.sandboxCoreSources(compilers: List<List<String>>) = CmakeSources(
     root = rootProject.file("sandbox-core"),
     directories = listOf("src", "scripts", "test"),
+    toolchain = cmakeToolchain(compilers),
     // Embedded into the driver by the CMake build (ssc_bootstrap_js.c).
     extra = listOf(rootProject.file("feature-plugin/src/iosMain/kotlin/dev/shinsou/kmp/plugin/runtime/IosJavaScriptBootstrap.kt")),
 )
 
-private fun Project.translationCoreSources() = CmakeSources(
+private fun Project.translationCoreSources(compilers: List<List<String>>) = CmakeSources(
     root = rootProject.file("translation-core"),
     directories = listOf("src"),
+    toolchain = cmakeToolchain(compilers),
 )
 
 /**
@@ -246,7 +439,9 @@ private fun Project.registerMacOsHelpers(
     // ADR-0002 S3: the plugin sandbox helper (sandbox-core's shinsou-sandbox), built for the host
     // architecture and shipped next to the WKWebView helper. It confines itself with sandbox_init at
     // startup; the signature carries no entitlements, so it gains nothing the deny-all profile removes.
-    val sandboxSources = sandboxCoreSources()
+    val compilers = macOsCompilers()
+    val compilerPins = macOsCompilerPins(compilers)
+    val sandboxSources = sandboxCoreSources(compilers)
     val sandboxBuild = layout.buildDirectory.dir("sandbox-core-macos").get().asFile.absolutePath
     val sandboxConfigure = listOf(
         "-S", sandboxSources.root.absolutePath, "-B", sandboxBuild,
@@ -256,7 +451,7 @@ private fun Project.registerMacOsHelpers(
     )
     val configureSandbox = tasks.register("configureMacOsSandboxHelper", Exec::class.java) {
         dependsOn(fetchSandbox)
-        configuresCmake(sandboxSources, sandboxBuild, sandboxConfigure)
+        configuresCmake(sandboxSources, sandboxBuild, sandboxConfigure, compilerPins)
     }
     val compileSandbox = tasks.register("compileMacOsSandboxHelper", Exec::class.java) {
         dependsOn(configureSandbox)
@@ -275,7 +470,7 @@ private fun Project.registerMacOsHelpers(
     // ADR-0004 §4.5: the offline translation helper (translation-core's shinsou-translate), built
     // for the host architecture and shipped next to the other helpers. A build without the helper
     // reports offline translation as unavailable.
-    val translationSources = translationCoreSources()
+    val translationSources = translationCoreSources(compilers)
     val translationBuild = layout.buildDirectory.dir("translation-core-macos").get().asFile.absolutePath
     // The host architecture: the engine's architecture detection refuses an explicit
     // CMAKE_OSX_ARCHITECTURES=arm64.
@@ -286,7 +481,7 @@ private fun Project.registerMacOsHelpers(
     )
     val configureTranslation = tasks.register("configureMacOsTranslationHelper", Exec::class.java) {
         dependsOn(fetchTranslation)
-        configuresCmake(translationSources, translationBuild, translationConfigure)
+        configuresCmake(translationSources, translationBuild, translationConfigure, compilerPins)
     }
     val compileTranslation = tasks.register("compileMacOsTranslationHelper", Exec::class.java) {
         dependsOn(configureTranslation)
@@ -310,7 +505,7 @@ private fun Project.registerWindowsHelpers(fetchSandbox: String, fetchTranslatio
     // ADR-0002 S3 (Windows): the same helper, built with MinGW-w64 (UCRT64; sandbox-core needs
     // pthreads and POSIX I/O, so not MSVC) as one static executable. It relaunches itself in a Low
     // Privilege AppContainer and a Job object (sandbox-core/src/ssc_os_windows.c).
-    val sandboxSources = sandboxCoreSources()
+    val sandboxSources = sandboxCoreSources(listOf(listOf("gcc")))
     val sandboxBuild = layout.buildDirectory.dir("sandbox-core-windows").get().asFile.absolutePath
     val sandboxConfigure = listOf(
         "-S", sandboxSources.root.absolutePath, "-B", sandboxBuild, "-G", "Ninja",
@@ -336,7 +531,7 @@ private fun Project.registerWindowsHelpers(fetchSandbox: String, fetchTranslatio
 
     // ADR-0004 §4.5 (Windows): the offline translation helper, built with the same MinGW-w64
     // (UCRT64) toolchain as the sandbox helper, as one static executable.
-    val translationSources = translationCoreSources()
+    val translationSources = translationCoreSources(listOf(listOf("gcc"), listOf("g++")))
     val translationBuild = layout.buildDirectory.dir("translation-core-windows").get().asFile.absolutePath
     val translationConfigure = listOf(
         "-S", translationSources.root.absolutePath, "-B", translationBuild, "-G", "Ninja",

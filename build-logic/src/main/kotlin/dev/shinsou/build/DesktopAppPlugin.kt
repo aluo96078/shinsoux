@@ -69,6 +69,8 @@ private fun Project.configureApplication(application: JvmApplication) = applicat
             "jdk.management",
             "java.net.http",
             "jdk.accessibility",
+            // GB18030 and Big5 TXT imports decode through the charsets of jdk.charsets.
+            "jdk.charsets",
             "jdk.jsobject",
             "jdk.unsupported",
             "jdk.unsupported.desktop",

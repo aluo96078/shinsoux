@@ -933,6 +933,15 @@ private const val MAX_TRANSFORMS: Int = 16
 private const val MAX_RENDITIONS: Int = 64
 public const val MAX_EPUB_AUXILIARY_GRAPH_ENTRIES: Int = 100_000
 public const val MAX_CONTENT_METADATA_JSON_CHARS: Int = 4_000_000
+
+/**
+ * The most text blocks a manifest may have and still be stored: its JSON has to fit
+ * [MAX_CONTENT_METADATA_JSON_CHARS], and a block takes up to 99 characters of it (a 42-character
+ * id and two 8-digit offsets). That is far below the 100,000 blocks a manifest may declare, so a
+ * text import merges paragraphs into blocks to stay within this.
+ */
+public const val MAX_STORABLE_TEXT_BLOCKS: Int = 36_000
+
 private const val EPUB_ARCHIVE_MEDIA_TYPE: String = "application/epub+zip"
 private const val ZERO_UUID: String = "00000000-0000-0000-0000-000000000000"
 private val UUID_PATTERN = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")

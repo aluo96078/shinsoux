@@ -108,6 +108,8 @@ public data class UnifiedReaderRenderState(
     val translationToggleSerial: Long = 0L,
     /** Told whether the chapter is shown translated, so the button can show it. */
     val onTranslationActiveChanged: (Boolean) -> Unit = {},
+    /** [requestedPageIndex] is the slider taken to its end: the last page, not a page turn onto it. */
+    val requestedDocumentEnd: Boolean = false,
 )
 
 /**
@@ -115,6 +117,28 @@ public data class UnifiedReaderRenderState(
  * embedded reader opens, which take focus with them on the desktop and iPadOS.
  */
 internal val LocalReaderFocusReturn = androidx.compose.runtime.staticCompositionLocalOf<() -> Unit> { {} }
+
+/**
+ * Where a typed reader on screen leaves a way to report at once a position it is still waiting
+ * to report (a continuous reader reports one only once its scrolling has stopped for a moment):
+ * leaving the reader, or its chapter, asks for it first, while its progress is still accepted.
+ */
+internal class ReaderProgressFlush {
+    private var pending: (() -> Unit)? = null
+
+    /** [report] reports the position not reported yet, if there is one; returns its unregistration. */
+    fun register(report: () -> Unit): () -> Unit {
+        pending = report
+        return { if (pending === report) pending = null }
+    }
+
+    /** Reports the position the reader on screen has not reported yet; nothing when there is none. */
+    fun flush() {
+        pending?.invoke()
+    }
+}
+
+internal val LocalReaderProgressFlush = androidx.compose.runtime.staticCompositionLocalOf<ReaderProgressFlush?> { null }
 
 /** What [ReaderScreen] shows: the title, the open chapter and its neighbours. */
 public data class ReaderScreenContent(
@@ -484,6 +508,7 @@ private fun BoxScope.ReaderPageSurface(
             // (requestFocus throws only while the requester is detached; focus then stays put)
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalReaderFocusReturn provides { runCatching { focusRequester.requestFocus() } },
+                LocalReaderProgressFlush provides state.progressFlush,
             ) {
                 unified.renderer(
                     unified.content,
@@ -492,6 +517,7 @@ private fun BoxScope.ReaderPageSurface(
                         settings = settings,
                         requestedPageIndex = state.pageRequest.targetIndex,
                         pageRequestSerial = state.pageRequest.serial,
+                        requestedDocumentEnd = state.pageRequest.toDocumentEnd,
                         navigationAction = state.navigationAction,
                         navigationRequestKey = state.navigationRequestKey,
                         controlsVisible = state.controlsVisible,
@@ -651,7 +677,7 @@ private fun ReaderToolbar(
         hasNextChapter = content.nextChapter != null,
         onClose = { state.handleReaderBack() },
         onOpenWeb = callbacks.onOpenWeb,
-        onPageChange = state::requestPage,
+        onPageChange = state::seekPage,
         onFavorite = callbacks.onToggleFavorite,
         onPreviousChapter = state::previousChapterControl,
         onNextChapter = state::nextChapterControl,
@@ -725,7 +751,7 @@ private fun ReaderVolumeKeyRegistration(
         ) != null && currentOnEvent(event)
     }
     DisposableEffect(router, handlerSlot) {
-        val registration = router?.register(handlerSlot::dispatch)
+        val registration = router?.register(handler = handlerSlot::dispatch)
         onDispose { registration?.unregister() }
     }
 }

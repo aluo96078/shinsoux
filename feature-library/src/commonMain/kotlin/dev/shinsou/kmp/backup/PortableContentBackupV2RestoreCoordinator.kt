@@ -3,6 +3,8 @@ package dev.shinsou.kmp.backup
 import dev.shinsou.kmp.annotation.ContentAnnotation
 import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.blob.BlobPublishReceipt
+import dev.shinsou.kmp.content.blob.SqlDriverContentBlobStore
+import dev.shinsou.kmp.content.blob.claimOrPublish
 import dev.shinsou.kmp.content.transaction.ContentBlobSyncJobMutation
 import dev.shinsou.kmp.content.transaction.ContentCommitBatch
 import dev.shinsou.kmp.content.transaction.ContentCommitSemantics
@@ -93,11 +95,12 @@ public class PortableContentBackupV2RestoreCoordinator(
         val restoredPublications = state.publications.withLocalBodyAvailability(
             published.receipts.mapTo(hashSetOf()) { it.reference.blobId },
         )
-        val batch = ContentCommitBatch<LegacyOutboxDraft>(
+        val batchWith = { receipts: List<BlobPublishReceipt> ->
+            ContentCommitBatch<LegacyOutboxDraft>(
             // Unchanged since the first device-only restore, so a commit journalled by an earlier
             // build keeps the same id and fingerprint.
             commitId = "backup-v2-restore:this_device_only:${inspection.envelope.manifestSha256}",
-            receipts = published.receipts,
+            receipts = receipts,
             attachments = published.attachments,
             metadata = state.auxiliary.metadata,
             aliases = state.auxiliary.aliases,
@@ -106,10 +109,11 @@ public class PortableContentBackupV2RestoreCoordinator(
             rightsGrants = state.rightsGrants.map(::ContentRightsGrantMutation),
             blobSyncJobs = emptyList(),
             semantics = ContentCommitSemantics.REPLACE_PORTABLE_GRAPH,
-        )
+            )
+        }
         // From here on the restore is not cancellable: the durable commit, the snapshot that pairs
         // with it and the runtime rights must not be split by a cancellation (P1, Codex review).
-        withContext(NonCancellable) { commitRestore(state, batch, provisionalGrants) }
+        withContext(NonCancellable) { commitRestore(state, published.receipts, batchWith, provisionalGrants) }
         PortableContentBackupV2RestoreResult(
             publicationCount = state.publications.size,
             annotationCount = state.annotations.size,
@@ -129,14 +133,21 @@ public class PortableContentBackupV2RestoreCoordinator(
     @Suppress("SuspendFunSwallowedCancellation")
     private suspend fun commitRestore(
         state: BackupV2PortableState,
-        batch: ContentCommitBatch<LegacyOutboxDraft>,
+        receipts: List<BlobPublishReceipt>,
+        batchWith: (List<BlobPublishReceipt>) -> ContentCommitBatch<LegacyOutboxDraft>,
         provisionalGrants: List<RightsGrant>,
     ) {
+        // Receipts claimed again below are this commit's own: the retry cache does not know them.
+        val reclaimed = ArrayList<BlobPublishReceipt>()
         try {
             repository.commitSnapshotMutationAtomically(
                 requested = state.legacySnapshot,
                 origin = SnapshotReplacementOrigin.DIRECT,
             ) { _, _, commitSyncJournal ->
+                // Under the repository lock, where a local import of the same book commits too: a
+                // receipt it shared and consumed since the bodies were published is claimed again.
+                // Each is recorded as it is claimed: a later claim that fails must not leak it.
+                val batch = batchWith(foundation.blobStore.refreshedReceipts(receipts, reclaimed))
                 foundation.transaction {
                     // Failures before the content participant commits leave the annotations inside
                     // the enclosing SQLite rollback. No network operation occurs.
@@ -148,6 +159,9 @@ public class PortableContentBackupV2RestoreCoordinator(
                 }
             }
         } catch (failure: Throwable) {
+            // Claimed again for this commit only: left pending, they would hold their blobs from
+            // cleanup until the app restarts.
+            foundation.blobStore.releasePendingReceipts(reclaimed)
             // The content participant can hydrate the in-memory authority before the enclosing
             // SQLite transaction later rolls back. Remove only grants that were provisional for
             // this restore; a durable, explicitly revoked grant must remain revoked.
@@ -177,6 +191,10 @@ public class PortableContentBackupV2RestoreCoordinator(
     ): BackupV2PublishedBodies {
         val archiveDigest = inspection.envelope.manifestSha256
         val staged = stagedReceiptsByArchive.getOrPut(archiveDigest) { mutableMapOf() }
+        // A cached receipt is reused only while it is still pending: a local import that published
+        // the same body (an EPUB's blobs have fixed ids) can have consumed it with its own commit.
+        val pending = foundation.blobStore.pendingReceipts().toSet()
+        staged.values.removeAll { it !in pending }
         val receipts = plans.map { plan ->
             cancellationCheckpoint()
             staged[plan.descriptor.path] ?: run {
@@ -185,17 +203,21 @@ public class PortableContentBackupV2RestoreCoordinator(
                     // A previous process may have published the verified immutable payload and
                     // then crashed before the shared metadata transaction. Receipts are purposely
                     // process-local, so adopt that exact durable body before attempting a publish.
-                    foundation.blobStore.claimExistingVerified(reference)
-                        ?: publishArchiveEntry(
+                    // A local import of the same book (an EPUB's blobs have fixed ids) can publish
+                    // it first, even between the claim and the publish: it is claimed then.
+                    foundation.blobStore.claimOrPublish(reference) {
+                        publishArchiveEntry(
                             entry = requireNotNull(archive.entry(plan.descriptor.path)) {
                                 "Verified backup body entry is missing"
                             },
                             reference = reference,
                             cancellationCheckpoint = cancellationCheckpoint,
                         )
+                    }
                 }.also { receipt ->
-                    cancellationCheckpoint()
+                    // Kept for the retry first: a cancellation here must not lose its receipt.
                     staged[plan.descriptor.path] = receipt
+                    cancellationCheckpoint()
                 }
             }
         }
@@ -375,3 +397,19 @@ public data class PortableContentBackupV2RestoreResult(
     val annotationCount: Int,
     val contentBlobCount: Int,
 )
+
+/**
+ * [receipts] with each one this store no longer holds pending (another operation consumed it, a
+ * local import of the same book that shared it) claimed again from the durable blob; kept as it
+ * is when there is none, for the commit to refuse. Each receipt claimed again is added to
+ * [reclaimed] as soon as it is, for the caller to give up if anything after it fails.
+ */
+internal fun SqlDriverContentBlobStore.refreshedReceipts(
+    receipts: List<BlobPublishReceipt>,
+    reclaimed: MutableList<BlobPublishReceipt> = ArrayList(),
+): List<BlobPublishReceipt> {
+    val pending = pendingReceipts().toSet()
+    return receipts.map { receipt ->
+        if (receipt in pending) receipt else claimExistingVerified(receipt.reference)?.also(reclaimed::add) ?: receipt
+    }
+}

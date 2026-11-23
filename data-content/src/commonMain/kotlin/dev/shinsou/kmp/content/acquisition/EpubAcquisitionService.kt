@@ -1,6 +1,7 @@
 package dev.shinsou.kmp.content.acquisition
 
 import dev.shinsou.kmp.content.blob.BlobPublishReceipt
+import dev.shinsou.kmp.content.blob.claimOrPublish
 import dev.shinsou.kmp.domain.content.BlobRef
 import dev.shinsou.kmp.content.blob.ContentBlobStore
 import dev.shinsou.kmp.domain.content.ContentManifest
@@ -296,12 +297,20 @@ public class EpubAcquisitionService(
         authorizeOfflineStore(prepared.offlineByteCount)
 
         val receipts = ArrayList<BlobPublishReceipt>(prepared.entries.size + 1)
-        receipts += publishArchive(prepared.archiveSource, prepared.archiveReference)
-        prepared.entries.forEach { entry ->
-            receipts += blobStore.put(
-                prepared.referencesByPath.getValue(entry.path),
-                entry.unsafeBytes(),
-            )
+        var published = false
+        try {
+            receipts += blobStore.claimOrPublish(prepared.archiveReference) {
+                publishArchive(prepared.archiveSource, prepared.archiveReference)
+            }
+            prepared.entries.forEach { entry ->
+                val reference = prepared.referencesByPath.getValue(entry.path)
+                receipts += blobStore.claimOrPublish(reference) { blobStore.put(reference, entry.unsafeBytes()) }
+            }
+            published = true
+        } finally {
+            // A failure partway (cancellation too, which goes on) gives up what was published:
+            // the blobs have fixed ids, and a receipt left pending would refuse the next import.
+            if (!published) blobStore.releasePendingReceipts(receipts)
         }
         return ContentAcquisitionResult(
             publicationDraft = publicationDraft,

@@ -90,6 +90,7 @@ internal class AppNavigator(
                 browseBackAvailable = if (moved) false else current.browseBackAvailable,
                 stack = current.stack.pop(PageLayer.LOCAL_EXTENSION, PageLayer.PENDING, PageLayer.MORE)
                     .push(PageEntry.Detail(mangaId)),
+                detailOpenings = current.detailOpenings + 1,
                 browseReaderOpen = false,
             )
         }
@@ -136,7 +137,11 @@ internal class AppNavigator(
             when {
                 !finished -> current
                 mangaId == null -> current.copy(stack = stack)
-                else -> current.copy(stack = stack.push(PageEntry.Detail(mangaId)), browseOwnedLegacyMangaId = mangaId)
+                else -> current.copy(
+                    stack = stack.push(PageEntry.Detail(mangaId)),
+                    browseOwnedLegacyMangaId = mangaId,
+                    detailOpenings = current.detailOpenings + 1,
+                )
             }
         }
         if (finished && mangaId != null) selection.clearChapters()
@@ -247,6 +252,38 @@ internal class AppNavigator(
 
     fun setBrowseReaderOpen(open: Boolean) = transition { it.copy(browseReaderOpen = open) }
 
+    /**
+     * The detail beside Browse when the user started opening a chapter there
+     * ([browseSectionReaderOpening]): its title and which opening ([NavigationState.detailOpenings]).
+     */
+    private var detailBesideOpeningReader: Pair<Long, Long>? = null
+
+    /** The user started opening a chapter in the Browse section's own reader; it shows once loaded. */
+    fun browseSectionReaderOpening() {
+        val state = mutableState.value
+        detailBesideOpeningReader = state.stack.detail?.let { it.mangaId to state.detailOpenings }
+    }
+
+    /**
+     * The Browse section's own reader opened or closed. It fills the window, so the detail column
+     * that was beside the section (a wide window with room for one) when the chapter was chosen
+     * is closed as it opens, like [closeDetail]: left open, it would be the top page, drawn over
+     * the reader and the first one Back closes. A title opened while the chapter loaded (a link)
+     * is newer than the reader and stays in front of it.
+     */
+    fun setBrowseSectionReaderOpen(open: Boolean) {
+        val beside = detailBesideOpeningReader
+        detailBesideOpeningReader = null
+        var closesDetail = false
+        transition {
+            // The same title opened again (a link) is a newer page and stays.
+            closesDetail = open && beside != null &&
+                it.stack.detail?.mangaId == beside.first && it.detailOpenings == beside.second
+            it.copy(stack = if (closesDetail) it.stack.pop(PageLayer.DETAIL) else it.stack, browseReaderOpen = open)
+        }
+        if (closesDetail) selection.clearChapters()
+    }
+
     fun setBrowseBackAvailable(available: Boolean) = transition { it.copy(browseBackAvailable = available) }
 
     /** The open detail page reports whether it has a nested Back of its own (an open sheet). */
@@ -264,7 +301,10 @@ internal class AppNavigator(
      * beneath it, and no Browse title still resolving replaces that page.
      */
     fun onReaderOpened(mangaId: Long) = transition {
-        it.copy(stack = it.stack.pop(PageLayer.PENDING).push(PageEntry.Detail(mangaId)))
+        it.copy(
+            stack = it.stack.pop(PageLayer.PENDING).push(PageEntry.Detail(mangaId)),
+            detailOpenings = it.detailOpenings + 1,
+        )
     }
 
     /**

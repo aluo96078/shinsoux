@@ -300,6 +300,7 @@ private fun TypedReaderRenderer(
         settings = renderState.settings,
         requestedPageIndex = renderState.requestedPageIndex,
         pageRequestSerial = renderState.pageRequestSerial,
+        requestedDocumentEnd = renderState.requestedDocumentEnd,
         navigationAction = renderState.navigationAction,
         navigationRequestKey = renderState.navigationRequestKey,
         readerControlsVisible = renderState.controlsVisible,

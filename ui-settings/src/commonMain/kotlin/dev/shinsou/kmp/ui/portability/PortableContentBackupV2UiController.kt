@@ -189,17 +189,32 @@ public class DefaultPortableContentBackupV2UiController(
         }
     }
 
-    override suspend fun inspectForRestore(source: BackupV2ArchiveSource): Unit = operationMutex.withLock {
+    override suspend fun inspectForRestore(source: BackupV2ArchiveSource) {
+        // The controller owns [source] from the call on, even while it waits for another operation
+        // (and is cancelled there): it stays open for review and a retried restore, and is closed
+        // when it is rejected, restored, replaced or discarded.
+        var retained = false
+        try {
+            operationMutex.withLock { retained = inspectLocked(source) }
+        } finally {
+            if (!retained) source.close()
+        }
+    }
+
+    /** Inspects [source] under [operationMutex]; true when it is kept for review. */
+    private suspend fun inspectLocked(source: BackupV2ArchiveSource): Boolean {
         val before = mutableState.value
         check(!before.busy) { "Another portable backup operation is in progress" }
-        pendingArchiveSource = null
-        pendingInspection = null
+        releasePendingArchive()
+        var retained = false
         mutableState.value = before.copy(
             phase = PortableContentBackupV2UiPhase.INSPECTING,
             restoreReview = null,
             restoreResult = null,
             failure = null,
         )
+        // Cancelled, the inspection leaves the state as it found it (see finally).
+        var settled = false
         try {
             if (source.byteSize > DEFAULT_MAX_ARCHIVE_BYTES) {
                 throw BackupFormatException("Content backup is too large")
@@ -211,15 +226,17 @@ public class DefaultPortableContentBackupV2UiController(
             val inspection = decoded.inspection
             pendingArchiveSource = source
             pendingInspection = inspection
+            retained = true
+            settled = true
             mutableState.value = mutableState.value.copy(
                 phase = PortableContentBackupV2UiPhase.REVIEW,
                 restoreReview = inspection.toUiSummary(source.byteSize),
                 failure = null,
             )
         } catch (cancelled: CancellationException) {
-            mutableState.value = before
             throw cancelled
         } catch (_: BackupFormatException) {
+            settled = true
             // A rejected archive is a normal user-input outcome, not an app failure.
             mutableState.value = before.copy(
                 phase = PortableContentBackupV2UiPhase.IDLE,
@@ -229,6 +246,7 @@ public class DefaultPortableContentBackupV2UiController(
                 ),
             )
         } catch (logged: Throwable) {
+            settled = true
             Log.warnKindOnly("Backup", logged) { "Inspecting the content backup failed" }
             mutableState.value = before.copy(
                 phase = PortableContentBackupV2UiPhase.IDLE,
@@ -237,7 +255,10 @@ public class DefaultPortableContentBackupV2UiController(
                     message = "The selected content archive could not be inspected safely.",
                 ),
             )
+        } finally {
+            if (!settled) mutableState.value = before
         }
+        return retained
     }
 
     // The restore runs under NonCancellable: no cancellation of the caller reaches its catch, and a
@@ -263,8 +284,7 @@ public class DefaultPortableContentBackupV2UiController(
         withContext(NonCancellable + workDispatcher) {
             try {
                 val result = action.restore(inspection, source)
-                pendingArchiveSource = null
-                pendingInspection = null
+                releasePendingArchive()
                 mutableState.value = mutableState.value.copy(
                     phase = PortableContentBackupV2UiPhase.COMPLETE,
                     restoreReview = null,
@@ -292,9 +312,14 @@ public class DefaultPortableContentBackupV2UiController(
 
     override fun discardRestoreReview() {
         if (mutableState.value.busy) return
+        releasePendingArchive()
+        mutableState.value = initialState.copy(lastExport = mutableState.value.lastExport)
+    }
+
+    private fun releasePendingArchive() {
+        pendingArchiveSource?.close()
         pendingArchiveSource = null
         pendingInspection = null
-        mutableState.value = initialState.copy(lastExport = mutableState.value.lastExport)
     }
 }
 

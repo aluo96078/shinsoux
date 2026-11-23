@@ -555,6 +555,7 @@ private fun <B, S> BrowsePublicationOverlay(
                     reader = PublicationReaderEvents(
                         onVisibilityChanged = state::setReaderVisible,
                         isShown = { state.overlays.activeV2Publication?.identityKey == publication.identityKey },
+                        onOpening = state::readerOpening,
                     ),
                 ),
                 sync = sync,

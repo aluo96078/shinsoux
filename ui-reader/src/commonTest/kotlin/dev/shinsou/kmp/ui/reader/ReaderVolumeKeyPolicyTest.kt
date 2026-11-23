@@ -1,5 +1,6 @@
 package dev.shinsou.kmp.ui.reader
 
+import androidx.compose.ui.input.key.Key
 import dev.shinsou.kmp.reader.ReaderTapAction
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -75,8 +76,8 @@ class ReaderVolumeKeyPolicyTest {
         val router = ReaderVolumeKeyRouter()
         val firstEvents = mutableListOf<ReaderVolumeKeyEvent>()
         val secondEvents = mutableListOf<ReaderVolumeKeyEvent>()
-        val first = router.register(firstEvents::add)
-        val second = router.register(secondEvents::add)
+        val first = router.register(handler = firstEvents::add)
+        val second = router.register(handler = secondEvents::add)
 
         assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
         assertTrue(firstEvents.isEmpty())
@@ -92,6 +93,128 @@ class ReaderVolumeKeyPolicyTest {
 
         second.unregister()
         assertFalse(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+    }
+
+    @Test
+    fun aCoveredReaderTakesNoPressesUntilItIsInFrontAgain() {
+        val router = ReaderVolumeKeyRouter()
+        val events = mutableListOf<ReaderVolumeKeyEvent>()
+        router.register(coverable = true) { events.add(it) }
+
+        router.covered = true
+        assertFalse(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        assertTrue(events.isEmpty())
+
+        router.covered = false
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_UP))
+        assertEquals(listOf(ReaderVolumeKeyEvent.VOLUME_UP), events)
+    }
+
+    @Test
+    fun aChapterReaderOpenedOverACoveredExtensionReaderKeepsPaging() {
+        val router = ReaderVolumeKeyRouter()
+        val extension = mutableListOf<ReaderVolumeKeyEvent>()
+        val chapter = mutableListOf<ReaderVolumeKeyEvent>()
+        router.register(coverable = true) { extension.add(it) }
+        router.covered = true
+        router.register { chapter.add(it) }
+
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        assertEquals(listOf(ReaderVolumeKeyEvent.VOLUME_DOWN), chapter)
+        assertTrue(extension.isEmpty())
+    }
+
+    @Test
+    fun theExtensionReaderOwnsPressesAgainWhenTheChapterReaderOverItCloses() {
+        val router = ReaderVolumeKeyRouter()
+        val extension = mutableListOf<ReaderVolumeKeyEvent>()
+        val chapter = mutableListOf<ReaderVolumeKeyEvent>()
+        val beneath = router.register(coverable = true) { extension.add(it) }
+        router.covered = true
+        // Two chapter readers in turn (next chapter): the first is outgoing once the second mounts.
+        val first = router.register { chapter.add(it) }
+        val second = router.register { chapter.add(it) }
+        first.unregister()
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        assertEquals(listOf(ReaderVolumeKeyEvent.VOLUME_DOWN), chapter)
+
+        second.unregister()
+        // Still covered until the navigator says the extension reader is in front.
+        assertFalse(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        router.covered = false
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_UP))
+        assertEquals(listOf(ReaderVolumeKeyEvent.VOLUME_UP), extension)
+
+        beneath.unregister()
+        assertFalse(router.dispatch(ReaderVolumeKeyEvent.VOLUME_UP))
+    }
+
+    @Test
+    fun anExtensionReaderDisposedBeneathAChapterReaderDoesNotChangeTheOwner() {
+        val router = ReaderVolumeKeyRouter()
+        var extensionCalls = 0
+        var chapterCalls = 0
+        val beneath = router.register(coverable = true) { extensionCalls++; true }
+        val chapter = router.register { chapterCalls++; true }
+
+        beneath.unregister()
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        chapter.unregister()
+        assertFalse(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        assertEquals(0, extensionCalls)
+        assertEquals(1, chapterCalls)
+    }
+
+    @Test
+    fun anExtensionReaderRegisteringLateGoesBeneathTheChapterReaderInFront() {
+        val router = ReaderVolumeKeyRouter()
+        val chapter = mutableListOf<ReaderVolumeKeyEvent>()
+        val extension = mutableListOf<ReaderVolumeKeyEvent>()
+        val front = router.register { chapter.add(it) }
+        // The extension reader beneath finishes loading after the chapter reader opened over it.
+        val beneath = router.register(coverable = true) { extension.add(it) }
+
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        assertEquals(listOf(ReaderVolumeKeyEvent.VOLUME_DOWN), chapter)
+        assertTrue(extension.isEmpty())
+        // Covering the extension reader does not silence the chapter reader in front of it.
+        router.covered = true
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_UP))
+        router.covered = false
+
+        front.unregister()
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_UP))
+        assertEquals(listOf(ReaderVolumeKeyEvent.VOLUME_UP), extension)
+        assertEquals(2, chapter.size)
+        beneath.unregister()
+        assertFalse(router.dispatch(ReaderVolumeKeyEvent.VOLUME_UP))
+    }
+
+    @Test
+    fun aNewerExtensionReaderOwnsPressesOverAnOlderOne() {
+        val router = ReaderVolumeKeyRouter()
+        var older = 0
+        var newer = 0
+        router.register(coverable = true) { older++; true }
+        val latest = router.register(coverable = true) { newer++; true }
+
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        assertEquals(0, older)
+        assertEquals(1, newer)
+        latest.unregister()
+        assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))
+        assertEquals(1, older)
+    }
+
+    @Test
+    fun aCoveredReaderSwallowsOnlyItsPagingKeys() {
+        listOf(Key.PageDown, Key.Spacebar, Key.DirectionLeft, Key.DirectionDown, Key.PageUp).forEach {
+            assertTrue(readerPagingKeyIsSwallowedWhileCovered(it), "$it")
+        }
+        // Volume goes back to the system; Back and Escape go to the page in front.
+        listOf(Key.VolumeDown, Key.VolumeUp, Key.Back, Key.Escape, Key.A).forEach {
+            assertFalse(readerPagingKeyIsSwallowedWhileCovered(it), "$it")
+        }
     }
 
     @Test
@@ -135,10 +258,10 @@ class ReaderVolumeKeyPolicyTest {
         var outgoingCalls = 0
         var incomingCalls = 0
         outgoingSlot.update { outgoingCalls++; true }
-        val outgoing = router.register(outgoingSlot::dispatch)
+        val outgoing = router.register(handler = outgoingSlot::dispatch)
 
         incomingSlot.update { incomingCalls++; true }
-        val incoming = router.register(incomingSlot::dispatch)
+        val incoming = router.register(handler = incomingSlot::dispatch)
         outgoing.unregister()
 
         assertTrue(router.dispatch(ReaderVolumeKeyEvent.VOLUME_DOWN))

@@ -10,6 +10,8 @@ import dev.shinsou.kmp.domain.model.ReaderSettings
 import dev.shinsou.kmp.domain.model.SecuritySettings
 import dev.shinsou.kmp.logging.Log
 import dev.shinsou.kmp.navigation.NavigationState
+import dev.shinsou.kmp.navigation.openReaderCovered
+import dev.shinsou.kmp.ui.reader.ReaderVolumeKeyRouter
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
 import dev.shinsou.kmp.ui.reader.effectiveReaderVolumeKeyMonitoringEnabled
@@ -37,6 +39,10 @@ internal fun ShellLifecycleEffects(app: ShinsouAppState, lifecycle: AppLifecycle
     }
     LaunchedEffect(appServices, app.volumeKeyRouter) {
         appServices.readerVolumeKeyEvents.collect(app.volumeKeyRouter::dispatch)
+    }
+    LaunchedEffect(app.navigator, app.volumeKeyRouter) {
+        // An open reader with another page in front of it (phone or wide window) takes no presses.
+        app.navigator.state.collect { app.volumeKeyRouter.covered = openReaderCovered(it) }
     }
     LaunchedEffect(lifecycle, app.v2Progress) {
         if (lifecycle == AppLifecycleState.FOREGROUND) return@LaunchedEffect
@@ -84,6 +90,8 @@ internal fun ReaderAndTitleEffects(
 internal fun PresentationEffects(
     app: ShinsouAppState,
     readerOpen: Boolean,
+    /** A reader is open and no page covers it ([readerInFront]). */
+    readerInFront: Boolean,
     readerSettings: ReaderSettings,
     secureScreen: Boolean,
 ) {
@@ -95,17 +103,20 @@ internal fun PresentationEffects(
     LaunchedEffect(readerOpen, readerSettings.fullscreen) {
         appServices.setFullscreen(readerOpen && readerSettings.fullscreen)
     }
-    DisposableEffect(appServices, readerOpen) {
+    DisposableEffect(appServices, readerInFront) {
         // Publish the reader gate as part of the composition commit. A launched coroutine leaves a
         // short window where iOS can begin its native edge recognizer after the reader appears.
-        appServices.setReaderOpen(readerOpen)
+        // A covered reader does not own the edge: Back swipes away the page in front of it.
+        appServices.setReaderOpen(readerInFront)
+        onDispose { if (readerInFront) appServices.setReaderOpen(false) }
+    }
+    DisposableEffect(appServices, readerOpen) {
         if (readerOpen) {
             appServices.setFullscreen(readerSettings.fullscreen)
             appServices.setReaderOrientation(readerSettings.orientation)
         }
         onDispose {
             if (readerOpen) {
-                appServices.setReaderOpen(false)
                 appServices.setFullscreen(false)
                 appServices.setReaderOrientation(null)
             }
@@ -115,7 +126,11 @@ internal fun PresentationEffects(
         if (readerOpen) appServices.setReaderOrientation(readerSettings.orientation)
     }
     val volumeKeysEnabled = effectiveReaderVolumeKeysEnabled(readerSettings.volumeKeys)
-    val interceptVolumeKeys = effectiveReaderVolumeKeyMonitoringEnabled(readerOpen, readerSettings.volumeKeys)
+    // A covered reader gives the buttons back to the system, which changes the volume again.
+    val interceptVolumeKeys = effectiveReaderVolumeKeyMonitoringEnabled(
+        readerInFront,
+        readerSettings.volumeKeys,
+    )
     DisposableEffect(appServices, volumeKeysEnabled) {
         // As on the original iOS app: AVAudioSession, silent playback and MPVolumeView are prepared
         // as soon as the preference is on, before the reader starts listening.
@@ -130,6 +145,14 @@ internal fun PresentationEffects(
         if (!interceptVolumeKeys) app.volumeKeyPressTracker.clear()
     }
 }
+
+/**
+ * Whether an open reader is the page in front, so it takes the volume buttons and the edge. The
+ * chapter reader ([legacyReaderOpen]) is drawn over everything; an extension reader can have a
+ * page in front of it ([ReaderVolumeKeyRouter.covered]), and then the system has the buttons.
+ */
+internal fun ShinsouAppState.readerInFront(legacyReaderOpen: Boolean, extensionReaderOpen: Boolean): Boolean =
+    legacyReaderOpen || extensionReaderOpen && !volumeKeyRouter.covered
 
 /** Locks and unlocks the app as the lifecycle and the lock settings change. */
 @Composable

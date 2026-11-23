@@ -43,6 +43,57 @@ class ContentBlobStoreContractTest {
     }
 
     @Test
+    fun aReleasedReceiptLetsTheSameBlobBePublishedAgain() {
+        val store = InMemoryContentBlobStore(maximumBlobSizeBytes = 32)
+        val bytes = "hello".encodeToByteArray()
+        val first = store.put(bytes, "text/plain")
+        // An abandoned import's receipt keeps a blob of the same id from being published again.
+        assertFailsWith<ContentBlobStoreException.InvalidStage> { store.put(first.reference, bytes) }
+
+        store.releasePendingReceipts(listOf(first))
+        assertEquals(0, store.pendingReceiptCount)
+        val again = store.put(first.reference, bytes)
+        assertEquals(first.reference, again.reference)
+        // Releasing a receipt again, or one another store issued, changes nothing.
+        store.releasePendingReceipts(listOf(first, InMemoryContentBlobStore(maximumBlobSizeBytes = 32).put(bytes)))
+        assertEquals(listOf(again), store.pendingReceipts())
+    }
+
+    @Test
+    fun aReceiptClaimedByAnotherOperationStaysPendingUntilBothReleaseIt() {
+        val store = InMemoryContentBlobStore(maximumBlobSizeBytes = 32)
+        val published = store.put("hello".encodeToByteArray(), "text/plain")
+        // A backup restore claims the body an import has just published, and caches the receipt.
+        val claimed = store.claimExistingVerified(published.reference)
+        assertSame(published, claimed)
+
+        store.releasePendingReceipts(listOf(published))
+        assertEquals(listOf(published), store.pendingReceipts(), "the restore still holds it")
+        store.releasePendingReceipts(listOf(published))
+        assertEquals(0, store.pendingReceiptCount)
+    }
+
+    @Test
+    fun aBlobPublishedByAnotherOperationBetweenTheClaimAndThePublishIsClaimed() {
+        val bytes = "hello".encodeToByteArray()
+        val reference = InMemoryContentBlobStore(maximumBlobSizeBytes = 32).put(bytes, "text/plain").reference
+        val store = InMemoryContentBlobStore(maximumBlobSizeBytes = 32)
+        var theirs: BlobPublishReceipt? = null
+
+        val ours = store.claimOrPublish(reference) {
+            // A backup restore publishes the same blob just before this operation does.
+            theirs = store.put(reference, bytes)
+            store.put(reference, bytes)
+        }
+        assertSame(theirs, ours, "shared, not refused")
+        assertEquals(1, store.pendingReceiptCount)
+        // Claimed when the store has it already: nothing is published again.
+        assertSame(ours, store.claimOrPublish(reference) { error("not published again") })
+        repeat(3) { store.releasePendingReceipts(listOf(ours)) }
+        assertEquals(0, store.pendingReceiptCount)
+    }
+
+    @Test
     fun serializedAttachmentContainsNoReceiptCapabilityOrStoreIdentity() {
         val store = InMemoryContentBlobStore(maximumBlobSizeBytes = 32)
         val published = store.put("hello".encodeToByteArray(), "text/plain")

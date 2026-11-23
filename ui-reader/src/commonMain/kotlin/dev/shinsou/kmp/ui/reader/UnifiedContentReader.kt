@@ -110,6 +110,7 @@ private fun PlainTextUnifiedContentReader(
     onNavigationBoundary: (ReaderTapAction) -> Unit,
     onReaderTap: (ReaderTapAction) -> Unit,
     modifier: Modifier,
+    requestedDocumentEnd: Boolean = false,
 ) {
     val strings = LocalShinsouStrings.current
     val canonicalText = requireNotNull(session.canonicalText)
@@ -173,6 +174,10 @@ private fun PlainTextUnifiedContentReader(
             initialVisualPageCount = if (reopened) session.initialVisualPageCount else null,
             requestedPageIndex = requestedPageIndex,
             pageRequestSerial = pageRequestSerial,
+            requestedDocumentEnd = requestedDocumentEnd,
+            // Only the position the session opened with was saved; one carried across a
+            // translation switch is the reader's own.
+            initialLocatorSaved = reopened && session.content.initialLocatorSaved,
             navigationAction = navigationAction,
             navigationRequestKey = navigationRequestKey,
             onPageChanged = onPageIndexChanged,
@@ -294,6 +299,8 @@ public fun UnifiedContentReader(
     onNavigationBoundary: (ReaderTapAction) -> Unit = {},
     onReaderTap: (ReaderTapAction) -> Unit = {},
     modifier: Modifier = Modifier,
+    /** [requestedPageIndex] is the slider taken to its end ([UnifiedReaderRenderState.requestedDocumentEnd]). */
+    requestedDocumentEnd: Boolean = false,
 ) {
     val representation = session.content.representation
     if (representation is ContentRepresentation.ImageSequence) {
@@ -361,6 +368,7 @@ public fun UnifiedContentReader(
         onNavigationBoundary = onNavigationBoundary,
         onReaderTap = onReaderTap,
         modifier = modifier,
+        requestedDocumentEnd = requestedDocumentEnd,
     )
 }
 
@@ -1358,11 +1366,14 @@ internal data class UnifiedReaderPageRequest(
     val targetIndex: Int,
     val serial: Long = 0L,
     val pending: Boolean = false,
+    /** The request is the slider taken to its end: the last page, not a page turn onto it. */
+    val toDocumentEnd: Boolean = false,
 ) {
-    fun request(targetIndex: Int): UnifiedReaderPageRequest = copy(
+    fun request(targetIndex: Int, toDocumentEnd: Boolean = false): UnifiedReaderPageRequest = copy(
         targetIndex = targetIndex,
         serial = serial + 1L,
         pending = true,
+        toDocumentEnd = toDocumentEnd,
     )
 
     fun observe(pageIndex: Int): UnifiedReaderPageRequest = when {

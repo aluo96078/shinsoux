@@ -19,6 +19,14 @@ public interface UnifiedReaderNavigation {
     /** Resolves by stable resource/block identity and ignores stale materialized index hints. */
     public fun indexOf(locator: ReadingLocator): Int?
 
+    /**
+     * [locator] as a locator of this content, or null when it does not belong to it. A saved or
+     * synced position whose stable identity this content no longer has, but that can still be
+     * found in it, is re-anchored here instead of being dropped; by default it is only kept
+     * when [indexOf] finds it.
+     */
+    public fun resolve(locator: ReadingLocator): ReadingLocator? = locator.takeIf { indexOf(it) != null }
+
     public fun previous(locator: ReadingLocator): ReadingLocator? =
         indexOf(locator)?.minus(1)?.takeIf { it >= 0 }?.let(::locatorAt)
 
@@ -46,6 +54,12 @@ public object UnifiedReaderNavigationFactory {
 public data class UnifiedReaderContent(
     val navigation: UnifiedReaderNavigation,
     val initialLocator: ReadingLocator = navigation.locatorAt(0),
+    /**
+     * [initialLocator] is a saved or synced position, not the start content without one gets:
+     * then it wins even at the very start of the text, over a saved page that may be stale (a
+     * sync moves the locator, not the page).
+     */
+    val initialLocatorSaved: Boolean = false,
 ) {
     public val representation: ContentRepresentation get() = navigation.representation
 
@@ -173,6 +187,24 @@ public class PlainTextNavigation(
             locator.resourceId != representation.resource.id
         ) return null
         return representation.blocks.indexOfFirst { it.blockId == locator.blockId }.takeIf { it >= 0 }
+    }
+
+    /**
+     * A text locator of this text whose block no longer exists (the text was split into blocks
+     * differently since it was saved, say) is re-anchored by its offset, or by its quote where
+     * the offset no longer shows it, to the block that now holds that place.
+     */
+    override fun resolve(locator: ReadingLocator): ReadingLocator.Text? {
+        val candidate = (locator as? ReadingLocator.Text)
+            ?.takeIf { it.scope == scope && it.resourceId == representation.resource.id }
+            ?: return null
+        return if (indexOf(candidate) != null) {
+            candidate
+        } else {
+            candidate.resolveOffset(text)
+                ?.takeIf { it in 0..representation.canonicalUtf16Length && isUtf16Boundary(text, it) }
+                ?.let { offset -> locatorForOffset(offset, candidate.direction, candidate.quote) }
+        }
     }
 
     private fun blockAt(index: Int): TextBlock {

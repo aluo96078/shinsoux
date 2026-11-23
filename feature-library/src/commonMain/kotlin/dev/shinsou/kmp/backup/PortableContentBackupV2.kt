@@ -301,6 +301,12 @@ public data class BackupV2CreatePolicy(
 public interface BackupV2ArchiveSource {
     public val byteSize: Long
     public fun read(offset: Long, byteCount: Int): ByteArray
+
+    /**
+     * Releases the platform file behind this source. Whoever holds the source for review calls it
+     * once nothing will read it again; it never throws.
+     */
+    public fun close() {}
 }
 
 /** Defensive in-memory compatibility source for the legacy `decode(ByteArray)` API. */

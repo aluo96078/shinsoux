@@ -68,6 +68,16 @@ public class SqlDelightPlugin : Plugin<Project> {
                 verifyMigrations.set(false)
             }
         }
+        // Kover leaves out generated code by package (QualityPlugin): a database in another one
+        // would be measured as hand-written code.
+        afterEvaluate {
+            extensions.getByType(SqlDelightExtension::class.java).databases.forEach { database ->
+                val generated = database.packageName.get()
+                if (generated !in SQLDELIGHT_GENERATED_PACKAGES) {
+                    throw GradleException("$path: SQLDelight database ${database.name} generates into $generated; add it to SQLDELIGHT_GENERATED_PACKAGES (QualityPlugin)")
+                }
+            }
+        }
 
         val check = registerIdentifierCheck()
         // Every module with generated queries is checked by its own tests and `check`.
@@ -163,20 +173,13 @@ public abstract class CheckSqlStatementIdentifiers : DefaultTask() {
         if (problems.isNotEmpty()) throw GradleException("SQL statement identifiers are not usable:\n" + problems.joinToString("\n"))
     }
 
-    /**
-     * `file:line` of every driver call in product code whose identifier (its first argument,
-     * positional or named) is a literal null: `execute(null, ...)`, `executeQuery<T>(null, ...)`,
-     * `execute(identifier = null, ...)`. String literals and comments are masked first, so neither
-     * an SQL text nor a KDoc example counts, and an unrelated `identifier = null` does not either.
-     */
+    /** `file:line` of every [nullIdentifierCalls] in product code but the registry's own file. */
     private fun nullIdentifierUses(): List<String> {
         // The registry's own file holds the exemption helpers, which are the one place that passes null.
         val exempt = registrySource.get().asFile
         return productSources.files.filter { it != exempt }.sortedBy { it.path }.flatMap { file ->
-            val text = maskStringsAndComments(file.readText())
-            NULL_IDENTIFIER.findAll(text).map { match ->
-                "${file.name}:${text.substring(0, match.range.first).count { it == '\n' } + 1}"
-            }.toList()
+            val text = file.readText()
+            nullIdentifierCalls(text).map { offset -> "${file.name}:${text.substring(0, offset).count { it == '\n' } + 1}" }
         }
     }
 
@@ -188,8 +191,61 @@ public abstract class CheckSqlStatementIdentifiers : DefaultTask() {
 
 /** `driver.execute(id, ...)`, `driver.executeQuery(id, ...)` and the parameterless `Query(id, ...)`. */
 private val STATEMENT = Regex("""(?:\.execute|\.executeQuery|\bQuery)\(\s*(-?[0-9][0-9_]*)\s*,""")
-/** A driver call with a literal null identifier: its first argument, positional or named, after optional type arguments. */
-private val NULL_IDENTIFIER = Regex("""\.(?:execute|executeQuery)\s*(?:<[^()]*>)?\s*\(\s*(?:identifier\s*=\s*)?null\s*[,)]""")
+/** The start of a call to `execute` or `executeQuery`, with or without a receiver, after optional type arguments. */
+private val DRIVER_CALL = Regex("""(?<![\w$])(?:execute|executeQuery)\s*(?:<[^()]*>)?\s*\(""")
+/** `fun` (and type parameters) right before a name: a declaration, not a call. */
+private val DECLARATION = Regex("""\bfun\s*(?:<[^()]*>\s*)?(?:[\w.]+\.)?$""")
+private val NAMED_NULL_IDENTIFIER = Regex("""^identifier\s*=\s*null$""")
+
+/**
+ * The offsets of the driver calls in [source] that pass a literal null identifier: the first
+ * argument a positional `null` (`execute(null, sql, 0)`, `executeQuery<T>(null, sql, mapper, 0)`,
+ * with or without a receiver), or `identifier = null` in any position. String literals and
+ * comments are masked first ([maskStringsAndComments]), so neither an SQL text nor a KDoc example
+ * counts.
+ *
+ * A positional null counts only when the SQL follows it: a statement identifier is never a call's
+ * only argument (`SqlDriver.execute(identifier, sql, parameters)`, and the wrappers around it,
+ * take the SQL next). So an ordinary function that happens to be named `execute` and takes one
+ * nullable argument (`execute(null)`) is not a finding.
+ */
+internal fun nullIdentifierCalls(source: String): List<Int> {
+    val text = maskStringsAndComments(source)
+    return DRIVER_CALL.findAll(text).filter { call ->
+        !DECLARATION.containsMatchIn(text.substring(maxOf(0, call.range.first - 80), call.range.first)) &&
+            callArguments(text, call.range.last + 1).let { arguments ->
+                arguments.firstOrNull() == "null" && arguments.size > 1 ||
+                    arguments.any { NAMED_NULL_IDENTIFIER.matches(it) }
+            }
+    }.map { it.range.first }.toList()
+}
+
+/**
+ * The top-level arguments of the call whose `(` is just before [from], trimmed, by position. A
+ * trailing lambda's braces and nested calls are skipped.
+ */
+private fun callArguments(text: String, from: Int): List<String> {
+    val arguments = mutableListOf<String>()
+    var depth = 0
+    var start = from
+    var i = from
+    while (i < text.length) {
+        when (text[i]) {
+            '(', '[', '{' -> depth++
+            ')', ']', '}' -> if (depth == 0) break else depth--
+            ',' -> if (depth == 0) {
+                arguments += text.substring(start, i).trim()
+                start = i + 1
+            }
+        }
+        i++
+    }
+    arguments += text.substring(start, minOf(i, text.length)).trim()
+    // Every slot is kept, a masked string literal's blank one too, so a null further along is
+    // never taken for the first argument; only the slot after a trailing comma (or of `()`) goes.
+    if (arguments.last().isEmpty()) arguments.removeAt(arguments.lastIndex)
+    return arguments
+}
 
 /**
  * [source] with the contents of its string and character literals and its comments replaced by
@@ -205,8 +261,8 @@ internal fun maskStringsAndComments(source: String): String {
     while (i < source.length) {
         val end = when {
             source.startsWith("//", i) -> source.indexOf('\n', i).let { if (it < 0) source.length else it }
-            source.startsWith("/*", i) -> source.indexOf("*/", i + 2).let { if (it < 0) source.length else it + 2 }
-            source.startsWith("\"\"\"", i) -> source.indexOf("\"\"\"", i + 3).let { if (it < 0) source.length else it + 3 }
+            source.startsWith("/*", i) -> closingComment(source, i)
+            source.startsWith("\"\"\"", i) -> closingRawString(source, i)
             source[i] == '"' || source[i] == '\'' -> closingQuote(source, i)
             else -> -1
         }
@@ -220,6 +276,29 @@ internal fun maskStringsAndComments(source: String): String {
     return out.toString()
 }
 
+/** The index after the end of the block comment opened at [start]; Kotlin block comments nest. */
+private fun closingComment(source: String, start: Int): Int {
+    var depth = 0
+    var i = start
+    while (i < source.length) {
+        when {
+            source.startsWith("/*", i) -> { depth++; i += 2 }
+            source.startsWith("*/", i) -> { depth--; i += 2; if (depth == 0) return i }
+            else -> i++
+        }
+    }
+    return source.length
+}
+
+/** The index after the raw string opened at [start]: its closing `"""` and any quotes right before it (`""""` ends in a quote). */
+private fun closingRawString(source: String, start: Int): Int {
+    val close = source.indexOf("\"\"\"", start + 3)
+    if (close < 0) return source.length
+    var end = close + 3
+    while (end < source.length && source[end] == '"') end++
+    return end
+}
+
 /** The index after the quote that closes the one-line string or char literal opened at [start]. */
 private fun closingQuote(source: String, start: Int): Int {
     val quote = source[start]
@@ -229,6 +308,7 @@ private fun closingQuote(source: String, start: Int): Int {
     }
     return minOf(i + 1, source.length)
 }
+
 private const val REGISTRY_PROJECT = ":data-content"
 private const val REGISTRY_SOURCE = "src/commonMain/kotlin/dev/shinsou/kmp/content/sql/SqlStatementIdentifiers.kt"
 private const val CHECK_TASK = "checkSqlStatementIdentifiers"

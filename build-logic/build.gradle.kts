@@ -13,7 +13,11 @@ dependencies {
     compileOnly("dev.detekt:detekt-gradle-plugin:${libs.versions.detekt.get()}")
     compileOnly("org.jetbrains.kotlinx:kover-gradle-plugin:${libs.versions.kover.get()}")
     compileOnly("app.cash.sqldelight:gradle-plugin:${libs.versions.sqldelight.get()}")
+    // The source scans the plugins run (SqlDelightPlugin's null-identifier check).
+    testImplementation(kotlin("test"))
 }
+
+tasks.test { useJUnitPlatform() }
 
 gradlePlugin {
     plugins {
